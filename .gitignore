@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.DS_Store
+*.mp4
+*.m3u8
+*.ts
+*.txt
+*.xlsx
+/tmp/
+.wrangler/
