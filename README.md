@@ -11,4 +11,4 @@ license: apache-2.0
 ---
 
 # KickCutter API Backend
-FastAPI & ZeroGPU backend for [kickcuttr.pages.dev](https://kickcuttr.pages.dev)
+FastAPI & ZeroGPU backend for [kickcutter.pages.dev](https://kickcutter.pages.dev)

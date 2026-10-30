@@ -58,7 +58,7 @@
         "name": "How do I cut a clip from a Kick stream or VOD?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Paste any Kick video or VOD URL into KickCutter, click 'Fetch Info', set your desired Start and End timestamps (e.g. 00:01:00 to 00:02:30), select your video quality, and click 'Cut Clip Now'. Your MP4 file will be ready for download in seconds."
+          "text": "Paste any Kick video or VOD URL into KickCutter, click 'Fetch Info', set your desired Start and End timestamps using the interactive range slider, select your video quality, and click 'Cut Clip Now'. Your MP4 file will be downloaded automatically when ready."
         }
       },
       {
@@ -74,12 +74,15 @@
         "name": "What video resolution can I download?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "KickCutter supports 1080p Full HD, 720p HD, 480p, and the Best Available source resolution provided by the streamer."
+          "text": "KickCutter automatically detects and displays all resolutions provided by the streamer, including 1080p60 Full HD, 720p60 HD, 480p, 360p, 160p, and Best Available Source."
         }
       }
     ]
   }
   </script>
+
+  <!-- HLS.js for direct Kick stream playback in browser -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -92,6 +95,7 @@
       --card-border: #1e2636;
       --accent: #53fc18;
       --accent-hover: #45dc11;
+      --accent-glow: rgba(83, 252, 24, 0.25);
       --text: #f1f5f9;
       --text-muted: #94a3b8;
       --danger: #ef4444;
@@ -145,7 +149,7 @@
     nav a:hover { color: #fff; }
     main {
       flex: 1;
-      max-width: 900px;
+      max-width: 920px;
       margin: 0 auto;
       width: 100%;
       padding: 2.5rem 1.25rem 5rem;
@@ -178,7 +182,7 @@
     .hero p {
       color: var(--text-muted);
       font-size: 1.05rem;
-      max-width: 620px;
+      max-width: 640px;
       margin: 0 auto;
     }
     .card {
@@ -231,41 +235,191 @@
       cursor: not-allowed;
       transform: none;
     }
-    .video-info {
+
+    /* Video Preview & Title Presentation */
+    .preview-card {
       display: none;
-      gap: 1.25rem;
+      margin-top: 1.5rem;
+      background: #0b0f17;
+      border: 1px solid #1f293d;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+    .preview-header {
+      padding: 1rem 1.25rem;
+      background: #0e141f;
+      border-bottom: 1px solid #1a2336;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+    .preview-title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    .preview-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .preview-badge {
+      display: inline-flex;
       align-items: center;
-      padding: 1.25rem;
-      background: #0d121c;
-      border-radius: 12px;
-      border: 1px solid #1e283b;
-      margin-top: 1.25rem;
+      gap: 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      white-space: nowrap;
     }
-    .video-thumb {
-      width: 180px;
-      height: 100px;
-      object-fit: cover;
-      border-radius: 8px;
-      border: 1px solid #2d3b55;
+    .badge-live {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.4);
     }
-    .video-details h3 {
-      font-size: 1.15rem;
-      margin-bottom: 0.4rem;
-      line-height: 1.3;
+    .badge-vod {
+      background: rgba(83, 252, 24, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(83, 252, 24, 0.3);
     }
-    .video-meta {
-      font-size: 0.9rem;
-      color: var(--text-muted);
+    .preview-meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.8rem;
+      gap: 1rem;
+      font-size: 0.88rem;
+      color: var(--text-muted);
     }
-    .video-meta strong { color: var(--accent); }
+    .preview-meta strong { color: #fff; }
+
+    .video-container {
+      position: relative;
+      background: #000;
+      width: 100%;
+      max-height: 480px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    #previewVideo {
+      width: 100%;
+      max-height: 480px;
+      background: #000;
+      display: block;
+    }
+
+    /* Range Slider Section */
+    .slider-section {
+      background: #0e1420;
+      border: 1px solid #1e283b;
+      border-radius: 12px;
+      padding: 1.25rem;
+      margin-top: 1.5rem;
+    }
+    .slider-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .slider-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .clip-duration-badge {
+      background: rgba(83, 252, 24, 0.15);
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: 0.85rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      border: 1px solid rgba(83, 252, 24, 0.3);
+    }
+
+    /* Dual Range Slider Component */
+    .range-slider-wrap {
+      position: relative;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      margin: 0.5rem 0;
+    }
+    .range-track {
+      position: absolute;
+      width: 100%;
+      height: 8px;
+      background: #1e293b;
+      border-radius: 4px;
+    }
+    .range-highlight {
+      position: absolute;
+      height: 8px;
+      background: var(--accent);
+      border-radius: 4px;
+      box-shadow: 0 0 10px var(--accent-glow);
+      z-index: 1;
+    }
+    .range-slider-input {
+      position: absolute;
+      width: 100%;
+      height: 8px;
+      -webkit-appearance: none;
+      background: none;
+      pointer-events: none;
+      z-index: 2;
+      margin: 0;
+      outline: none;
+    }
+    .range-slider-input::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      pointer-events: auto;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #53fc18;
+      border: 3px solid #090c10;
+      box-shadow: 0 0 10px rgba(83, 252, 24, 0.8);
+      cursor: ew-resize;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .range-slider-input::-webkit-slider-thumb:hover {
+      transform: scale(1.15);
+      box-shadow: 0 0 14px rgba(83, 252, 24, 1);
+    }
+    .range-slider-input::-moz-range-thumb {
+      pointer-events: auto;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #53fc18;
+      border: 3px solid #090c10;
+      box-shadow: 0 0 10px rgba(83, 252, 24, 0.8);
+      cursor: ew-resize;
+    }
+    .slider-time-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      font-family: var(--mono);
+      margin-top: 4px;
+    }
+
+    /* Controls Grid */
     .controls-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1.3fr;
       gap: 1rem;
-      margin-top: 1.5rem;
+      margin-top: 1.25rem;
     }
     .control-item label {
       display: block;
@@ -274,6 +428,7 @@
       color: var(--text-muted);
       margin-bottom: 0.4rem;
     }
+    .control-item input,
     .control-item select {
       width: 100%;
       background: #0d1117;
@@ -284,6 +439,11 @@
       padding: 0.85rem;
       outline: none;
       font-family: var(--font);
+      transition: border-color 0.2s;
+    }
+    .control-item input:focus,
+    .control-item select:focus {
+      border-color: var(--accent);
     }
     .presets {
       display: flex;
@@ -300,43 +460,78 @@
       font-size: 0.8rem;
       font-weight: 600;
       cursor: pointer;
+      transition: all 0.15s;
     }
     .pill:hover {
       background: #23324d;
       border-color: var(--accent);
       color: #fff;
     }
+
+    /* Result / Progress Section */
     .result-section {
       display: none;
       text-align: center;
-      padding: 1.5rem;
+      padding: 1.75rem;
       background: #0d121c;
-      border-radius: 12px;
+      border-radius: 14px;
       border: 1px solid #1e283b;
       margin-top: 1.5rem;
     }
+    .progress-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .progress-text {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      text-align: left;
+    }
+    .percent-badge {
+      font-family: var(--mono);
+      font-size: 1.25rem;
+      font-weight: 800;
+      color: var(--accent);
+    }
     .progress-bar-container {
       width: 100%;
-      height: 8px;
+      height: 12px;
       background: #1e293b;
       border-radius: 999px;
       overflow: hidden;
-      margin: 1rem 0;
+      margin: 0.5rem 0 1rem;
+      border: 1px solid #26334a;
     }
     .progress-bar-fill {
       width: 0%;
       height: 100%;
-      background: var(--accent);
-      transition: width 0.3s;
+      background: linear-gradient(90deg, #45dc11, #53fc18);
+      box-shadow: 0 0 12px rgba(83, 252, 24, 0.6);
+      transition: width 0.3s ease;
     }
-    video {
+    .auto-download-notice {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-top: 0.75rem;
+    }
+    #resultVideoPlayer {
       width: 100%;
-      max-height: 400px;
+      max-height: 420px;
       border-radius: 10px;
       margin: 1.25rem 0;
       background: #000;
       border: 1px solid #243047;
+      display: none;
     }
+
     .spinner {
       display: inline-block;
       width: 16px;
@@ -485,12 +680,11 @@
     }
     .footer-links a:hover { color: var(--accent); }
 
-    @media (max-width: 640px) {
+    @media (max-width: 680px) {
       .input-row { flex-direction: column; }
       .controls-grid { grid-template-columns: 1fr; }
-      .video-info { flex-direction: column; text-align: center; }
-      .video-thumb { width: 100%; height: auto; }
       nav { display: none; }
+      .preview-title-row { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
@@ -511,78 +705,125 @@
 
   <main>
     <div class="hero">
-      <div class="hero-badge">⚡ 100% Free &bull; No Watermark &bull; 1080p Full HD</div>
+      <div class="hero-badge">⚡ 100% Free &bull; No Watermark &bull; Real-Time Slider &amp; Auto Download</div>
       <h1>Fast Online <span>Kick</span> Video Clipper</h1>
-      <p>Easily trim and download high-quality MP4 clips from Kick.com streams, VODs, and broadcasts without downloading full 20GB files.</p>
+      <p>Instant video preview, interactive timeline range slider, autofetched resolutions, and automated MP4 downloads without installing software.</p>
     </div>
 
     <!-- Main Clipper Card -->
     <div class="card">
       <div class="input-row">
-        <input type="text" id="urlInput" placeholder="Paste Kick URL (e.g. https://kick.com/video/UUID or https://kick.com/xqc)" autofocus>
+        <input type="text" id="urlInput" placeholder="Paste Kick URL (e.g. https://kick.com/xqc or https://kick.com/video/UUID)" autofocus>
         <button class="btn" id="fetchBtn" onclick="handleFetch()">
           <span id="fetchBtnText">🔍 Fetch Info</span>
         </button>
       </div>
 
-      <!-- Video Info Block -->
-      <div class="video-info" id="videoInfoBlock">
-        <img src="" id="videoThumb" class="video-thumb" alt="Thumbnail">
-        <div class="video-details">
-          <h3 id="videoTitle">Kick Video Title</h3>
-          <div class="video-meta">
-            <span>Creator: <strong id="videoCreator">Creator</strong></span>
-            <span>Duration: <strong id="videoDuration">00:00:00</strong></span>
-            <span>ID: <code id="videoStreamId">N/A</code></span>
+      <!-- Video Preview & Title Card (Shown Immediately on Fetch Info) -->
+      <div class="preview-card" id="previewCard">
+        <div class="preview-header">
+          <div class="preview-title-row">
+            <h2 class="preview-title" id="videoTitle">Kick Video Title</h2>
+            <span class="preview-badge badge-vod" id="liveBadge">📼 VOD</span>
           </div>
+          <div class="preview-meta">
+            <span>Streamer: <strong id="videoCreator">Creator</strong></span>
+            <span>Total Duration: <strong id="videoDuration">00:00:00</strong></span>
+            <span>ID: <code id="videoStreamId" style="color: var(--accent);">N/A</code></span>
+          </div>
+        </div>
+
+        <div class="video-container">
+          <video id="previewVideo" controls playsinline preload="metadata"></video>
         </div>
       </div>
 
-      <!-- Trimming Controls -->
+      <!-- Trimming Controls & Interactive Range Slider -->
       <div id="trimControls" style="display: none;">
+        
+        <!-- Interactive Range Slider Section -->
+        <div class="slider-section">
+          <div class="slider-header">
+            <div class="slider-title">
+              <span>🎬 Drag Slider to Set Clip Range</span>
+            </div>
+            <div class="clip-duration-badge" id="selectedDurationBadge">
+              Clip: 00:01:00 (60s)
+            </div>
+          </div>
+
+          <!-- Dual-Handle Range Slider -->
+          <div class="range-slider-wrap">
+            <div class="range-track"></div>
+            <div class="range-highlight" id="sliderHighlight"></div>
+            <input type="range" id="rangeStart" class="range-slider-input" min="0" max="3600" value="0" step="1">
+            <input type="range" id="rangeEnd" class="range-slider-input" min="0" max="3600" value="60" step="1">
+          </div>
+
+          <div class="slider-time-labels">
+            <span id="sliderLabelStart">00:00:00</span>
+            <span id="sliderLabelMid" style="color: #64748b;">Slide to adjust start &amp; end</span>
+            <span id="sliderLabelEnd">01:00:00</span>
+          </div>
+        </div>
+
+        <!-- Precise Input Boxes & Quality Selector -->
         <div class="controls-grid">
           <div class="control-item">
-            <label>Start Time (HH:MM:SS or Sec)</label>
+            <label>Start Timestamp</label>
             <input type="text" id="startTime" value="00:00:00">
           </div>
           <div class="control-item">
-            <label>End Time (HH:MM:SS or Sec)</label>
+            <label>End Timestamp</label>
             <input type="text" id="endTime" value="00:01:00">
           </div>
           <div class="control-item">
-            <label>Video Quality</label>
+            <label>Available Resolutions (Autofetched)</label>
             <select id="qualitySelect">
-              <option value="720p" selected>720p HD (Fast &amp; Balanced)</option>
-              <option value="1080p">1080p Full HD</option>
-              <option value="480p">480p (Lightweight)</option>
-              <option value="best">Best Available Source</option>
+              <option value="best" selected>⚡ Best Available Source (Original)</option>
+              <option value="1080p">⚡ 1080p Full HD</option>
+              <option value="720p">⚡ 720p HD</option>
+              <option value="480p">⚡ 480p SD</option>
             </select>
           </div>
         </div>
 
+        <!-- Quick Length Presets -->
         <div class="presets">
           <span style="font-size: 0.8rem; color: var(--text-muted); align-self: center;">Quick Lengths:</span>
-          <button class="pill" onclick="setDuration(30)">+30 sec</button>
-          <button class="pill" onclick="setDuration(60)">+1 min</button>
-          <button class="pill" onclick="setDuration(120)">+2 min</button>
-          <button class="pill" onclick="setDuration(300)">+5 min</button>
+          <button class="pill" onclick="setQuickLength(15)">+15 sec</button>
+          <button class="pill" onclick="setQuickLength(30)">+30 sec</button>
+          <button class="pill" onclick="setQuickLength(60)">+1 min</button>
+          <button class="pill" onclick="setQuickLength(120)">+2 min</button>
+          <button class="pill" onclick="setQuickLength(300)">+5 min</button>
         </div>
 
+        <!-- Cut Clip Action Button -->
         <div style="margin-top: 1.5rem; text-align: center;">
-          <button class="btn" id="cutBtn" style="width: 100%; justify-content: center; font-size: 1.1rem; padding: 1rem;" onclick="handleCut()">
+          <button class="btn" id="cutBtn" style="width: 100%; justify-content: center; font-size: 1.15rem; padding: 1.1rem;" onclick="handleCut()">
             <span id="cutBtnText">✂️ Cut Clip Now</span>
           </button>
         </div>
       </div>
 
-      <!-- Result / Progress Block -->
+      <!-- Result / Live Percentage Progress Block -->
       <div class="result-section" id="resultBlock">
-        <h4 id="statusText" style="color: #fff; margin-bottom: 0.5rem;">Connecting to stream pipeline...</h4>
+        <div class="progress-header">
+          <span class="progress-text" id="statusText">Connecting to stream slicer pipeline...</span>
+          <span class="percent-badge" id="percentBadge">0%</span>
+        </div>
+        
         <div class="progress-bar-container" id="progressWrapper">
           <div class="progress-bar-fill" id="progressBar"></div>
         </div>
-        <video id="videoPlayer" controls style="display: none;"></video>
-        <div style="margin-top: 1rem;">
+
+        <div class="auto-download-notice" id="autoDownloadNotice">
+          <span>🚀 100% Complete! Your MP4 download has started automatically.</span>
+        </div>
+
+        <video id="resultVideoPlayer" controls playsinline></video>
+
+        <div style="margin-top: 1.25rem;">
           <a href="#" id="downloadLink" class="btn" style="display: none; text-decoration: none;" download>
             📥 Download MP4 Clip (<span id="fileSize">0 MB</span>)
           </a>
@@ -599,17 +840,17 @@
         <div class="step-card">
           <div class="step-num">1</div>
           <h3>Paste Kick URL</h3>
-          <p>Copy the link of any Kick stream, VOD, or existing clip and paste it into the search box above.</p>
+          <p>Copy the link of any Kick stream, VOD, or clip and click <strong>Fetch Info</strong>. The video preview and title appear instantly.</p>
         </div>
         <div class="step-card">
           <div class="step-num">2</div>
-          <h3>Select Start &amp; End</h3>
-          <p>Pick the exact moments you want to slice using timestamps (e.g. 01:20 to 02:45) and choose your quality.</p>
+          <h3>Slide to Select Range</h3>
+          <p>Drag the interactive dual range slider to choose your exact start and end moments, and select your preferred stream resolution.</p>
         </div>
         <div class="step-card">
           <div class="step-num">3</div>
-          <h3>Preview &amp; Download</h3>
-          <p>Watch your trimmed video in the browser player and download your watermark-free MP4 file immediately.</p>
+          <h3>Automatic Download</h3>
+          <p>Watch real-time progress reach 100%. Your clean, watermark-free MP4 file downloads automatically to your device.</p>
         </div>
       </div>
     </div>
@@ -617,38 +858,38 @@
     <!-- Features Section -->
     <div id="features">
       <h2 class="section-title">Why Creators Choose KickCutter</h2>
-      <p class="section-subtitle">Engineered specifically for Kick streamers, editors, and social media managers.</p>
+      <p class="section-subtitle">Engineered specifically for Kick streamers, video editors, and content creators.</p>
 
       <div class="features-grid">
         <div class="feature-card">
           <div class="feature-icon">⚡</div>
-          <h3>Server-Side Stream Slicing</h3>
-          <p>Never download huge 8-hour VOD files again. Our cloud backend slices only the precise seconds you need.</p>
+          <h3>Instant Video Preview</h3>
+          <p>Watch the stream or VOD directly in the browser player as soon as you fetch the URL without leaving the page.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎚️</div>
+          <h3>Visual Range Slider</h3>
+          <p>Scrub and select timestamps visually with an interactive dual range slider that updates clip duration in real time.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🎯</div>
+          <h3>Autofetched Resolutions</h3>
+          <p>Automatically detects and displays the streamer's exact available resolutions (1080p60, 720p60, 480p, 360p, 160p).</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">📊</div>
+          <h3>Live Percentage Progress</h3>
+          <p>Track exact percentage progress (0% to 100%) as the cloud backend slices the precise stream segments.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🚀</div>
+          <h3>Automated MP4 Download</h3>
+          <p>No extra clicks required. As soon as the clipping hits 100%, the MP4 download begins automatically.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🚫</div>
-          <h3>Zero Watermarks</h3>
-          <p>Clean, unbranded MP4 video exports ready to post directly to TikTok, Instagram Reels, and YouTube Shorts.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">📺</div>
-          <h3>Up to 1080p60 Full HD</h3>
-          <p>Retains the original stream bitrate and framerate without compression degradation.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">📱</div>
-          <h3>Works on Mobile &amp; Desktop</h3>
-          <p>Fully responsive web interface that works smoothly on iPhone, Android, Mac, and Windows browsers.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">🔒</div>
-          <h3>Privacy-Centric</h3>
-          <p>We do not store your videos permanently. Clips are automatically deleted from server memory after download.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">💰</div>
-          <h3>100% Free Forever</h3>
-          <p>No paywalls, no credit cards, and no subscription traps. Pure open-source creator tooling.</p>
+          <h3>100% Free &amp; No Watermark</h3>
+          <p>No logos, no branding, and no subscription traps. Pure high-speed video clipping for TikTok, Reels, and Shorts.</p>
         </div>
       </div>
     </div>
@@ -664,7 +905,7 @@
             How do I get the link of a Kick stream or VOD? <span>+</span>
           </div>
           <div class="faq-answer">
-            Open the Kick broadcast or VOD in your browser and copy the URL from the address bar (e.g. <code>https://kick.com/video/UUID</code> or <code>https://kick.com/channelname</code>).
+            Open the Kick broadcast, VOD, or clip in your browser and copy the URL from the address bar (e.g. <code>https://kick.com/xqc</code> or <code>https://kick.com/video/UUID</code>).
           </div>
         </div>
 
@@ -679,19 +920,19 @@
 
         <div class="faq-item">
           <div class="faq-question" onclick="toggleFaq(this)">
-            What is the maximum clip duration allowed? <span>+</span>
+            How does the range slider work? <span>+</span>
           </div>
           <div class="faq-answer">
-            You can slice segments up to 2 hours long in a single clip. For social media highlights, segments between 30 seconds and 3 minutes process fastest.
+            Drag the left handle to set the starting moment and the right handle to set the ending moment. You can also type timestamps directly or click quick preset buttons like +30s or +1min.
           </div>
         </div>
 
         <div class="faq-item">
           <div class="faq-question" onclick="toggleFaq(this)">
-            Can I cut a clip while the streamer is still live? <span>+</span>
+            Will the download start automatically when ready? <span>+</span>
           </div>
           <div class="faq-answer">
-            Yes! If the streamer has VOD recordings enabled, you can enter the channel URL and clip recent broadcast segments while the stream is in progress.
+            Yes! As soon as the progress bar reaches 100%, your browser will automatically download the MP4 clip, and a download button is also provided for re-downloading anytime.
           </div>
         </div>
 
@@ -700,7 +941,7 @@
             Is KickCutter affiliated with Kick.com? <span>+</span>
           </div>
           <div class="faq-answer">
-            No, KickCutter is an independent open-source utility created for video editors and fans. It is not affiliated with or endorsed by Kick.com.
+            No, KickCutter is an independent open-source creator tool. It is not affiliated with, endorsed by, or sponsored by Kick.com.
           </div>
         </div>
       </div>
@@ -725,6 +966,9 @@
       ? "http://127.0.0.1:7860"
       : "https://shubhamsain858-kickcuttr-api.hf.space";
 
+    let totalVideoDuration = 3600;
+    let hlsInstance = null;
+
     function toggleFaq(el) {
       const answer = el.nextElementSibling;
       const span = el.querySelector('span');
@@ -738,7 +982,7 @@
     }
 
     function timeToSec(t) {
-      const parts = t.split(":").map(Number);
+      const parts = String(t).trim().split(":").map(Number);
       if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
       if (parts.length === 2) return parts[0] * 60 + parts[1];
       return Number(t) || 0;
@@ -753,11 +997,87 @@
       return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     }
 
-    function setDuration(addSec) {
-      const start = timeToSec(document.getElementById('startTime').value);
-      document.getElementById('endTime').value = secToTime(start + addSec);
+    // --- RANGE SLIDER SYNC ---
+    const rangeStart = document.getElementById('rangeStart');
+    const rangeEnd = document.getElementById('rangeEnd');
+    const sliderHighlight = document.getElementById('sliderHighlight');
+    const startTimeInput = document.getElementById('startTime');
+    const endTimeInput = document.getElementById('endTime');
+    const selectedDurationBadge = document.getElementById('selectedDurationBadge');
+    const previewVideo = document.getElementById('previewVideo');
+
+    function updateSliderUi() {
+      const max = Number(rangeStart.max) || 3600;
+      let sVal = Number(rangeStart.value);
+      let eVal = Number(rangeEnd.value);
+
+      if (sVal > eVal - 1) {
+        sVal = Math.max(0, eVal - 1);
+        rangeStart.value = sVal;
+      }
+      if (eVal < sVal + 1) {
+        eVal = Math.min(max, sVal + 1);
+        rangeEnd.value = eVal;
+      }
+
+      const leftPct = (sVal / max) * 100;
+      const rightPct = 100 - (eVal / max) * 100;
+
+      sliderHighlight.style.left = `${leftPct}%`;
+      sliderHighlight.style.right = `${rightPct}%`;
+
+      startTimeInput.value = secToTime(sVal);
+      endTimeInput.value = secToTime(eVal);
+
+      const clipSec = Math.max(0, eVal - sVal);
+      selectedDurationBadge.textContent = `Clip: ${secToTime(clipSec)} (${clipSec}s)`;
     }
 
+    rangeStart.addEventListener('input', () => {
+      let sVal = Number(rangeStart.value);
+      let eVal = Number(rangeEnd.value);
+      if (sVal >= eVal) {
+        rangeStart.value = eVal - 1;
+      }
+      updateSliderUi();
+      if (previewVideo && previewVideo.duration) {
+        previewVideo.currentTime = Number(rangeStart.value);
+      }
+    });
+
+    rangeEnd.addEventListener('input', () => {
+      let sVal = Number(rangeStart.value);
+      let eVal = Number(rangeEnd.value);
+      if (eVal <= sVal) {
+        rangeEnd.value = sVal + 1;
+      }
+      updateSliderUi();
+      if (previewVideo && previewVideo.duration) {
+        previewVideo.currentTime = Number(rangeEnd.value);
+      }
+    });
+
+    startTimeInput.addEventListener('change', () => {
+      const sec = timeToSec(startTimeInput.value);
+      rangeStart.value = sec;
+      updateSliderUi();
+    });
+
+    endTimeInput.addEventListener('change', () => {
+      const sec = timeToSec(endTimeInput.value);
+      rangeEnd.value = sec;
+      updateSliderUi();
+    });
+
+    function setQuickLength(addSec) {
+      const sVal = Number(rangeStart.value);
+      const max = Number(rangeEnd.max);
+      const newEnd = Math.min(max, sVal + addSec);
+      rangeEnd.value = newEnd;
+      updateSliderUi();
+    }
+
+    // --- FETCH INFO ---
     async function handleFetch() {
       const url = document.getElementById('urlInput').value.trim();
       if (!url) return alert('Please enter a Kick URL');
@@ -776,35 +1096,100 @@
         const data = await resp.json();
 
         if (resp.ok && data.success) {
+          // 1. Show Video Details & Title immediately
           document.getElementById('videoTitle').textContent = data.title;
           document.getElementById('videoCreator').textContent = data.uploader;
           document.getElementById('videoDuration').textContent = data.duration_str;
           document.getElementById('videoStreamId').textContent = data.stream_id;
-          if (data.thumbnail) {
-            document.getElementById('videoThumb').src = data.thumbnail;
-            document.getElementById('videoThumb').style.display = 'block';
+
+          const liveBadge = document.getElementById('liveBadge');
+          if (data.is_live) {
+            liveBadge.className = 'preview-badge badge-live';
+            liveBadge.textContent = '🔴 LIVE';
           } else {
-            document.getElementById('videoThumb').style.display = 'none';
+            liveBadge.className = 'preview-badge badge-vod';
+            liveBadge.textContent = '📼 VOD';
           }
-          document.getElementById('videoInfoBlock').style.display = 'flex';
+
+          // 2. Load Video Preview via HLS.js or native player
+          const previewCard = document.getElementById('previewCard');
+          previewCard.style.display = 'block';
+
+          if (data.thumbnail) {
+            previewVideo.poster = data.thumbnail;
+          }
+
+          if (data.preview_url) {
+            if (hlsInstance) {
+              hlsInstance.destroy();
+              hlsInstance = null;
+            }
+
+            if (Hls.isSupported() && data.preview_url.includes('.m3u8')) {
+              hlsInstance = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true
+              });
+              hlsInstance.loadSource(data.preview_url);
+              hlsInstance.attachMedia(previewVideo);
+            } else if (previewVideo.canPlayType('application/vnd.apple.mpegurl') || !data.preview_url.includes('.m3u8')) {
+              previewVideo.src = data.preview_url;
+            }
+          }
+
+          // 3. Populate Available Resolutions dynamically
+          const qualitySelect = document.getElementById('qualitySelect');
+          qualitySelect.innerHTML = '';
+
+          const resList = (data.available_resolutions && data.available_resolutions.length > 0)
+            ? data.available_resolutions
+            : [
+                { id: 'best', label: 'Best Available Source' },
+                { id: '1080p', label: '1080p Full HD' },
+                { id: '720p', label: '720p HD' },
+                { id: '480p', label: '480p SD' }
+              ];
+
+          resList.forEach((r, idx) => {
+            const opt = document.createElement('option');
+            opt.value = r.id;
+            opt.textContent = `⚡ ${r.label}`;
+            // Preselect 720p or 1080p for best balance
+            if (r.id.includes('720') || (idx === 1 && !r.id.includes('1080'))) {
+              opt.selected = true;
+            }
+            qualitySelect.appendChild(opt);
+          });
+
+          // 4. Configure Range Slider
+          totalVideoDuration = data.duration > 0 ? data.duration : 3600;
+          rangeStart.max = totalVideoDuration;
+          rangeEnd.max = totalVideoDuration;
+          rangeStart.value = 0;
+          
+          const defaultClipLen = Math.min(60, totalVideoDuration);
+          rangeEnd.value = defaultClipLen;
+
+          document.getElementById('sliderLabelStart').textContent = '00:00:00';
+          document.getElementById('sliderLabelEnd').textContent = secToTime(totalVideoDuration);
+
+          updateSliderUi();
+
+          // Reveal Trimming Controls & Slider
           document.getElementById('trimControls').style.display = 'block';
 
-          if (data.duration > 60) {
-            document.getElementById('endTime').value = '00:01:00';
-          } else if (data.duration > 0) {
-            document.getElementById('endTime').value = secToTime(data.duration);
-          }
         } else {
           alert('Error: ' + (data.detail || 'Could not fetch video details.'));
         }
       } catch (err) {
-        alert('Could not connect to backend server. Please verify your internet connection.');
+        alert('Could not connect to backend server. Please verify your connection.');
       } finally {
         fetchBtn.disabled = false;
         fetchBtnText.innerHTML = '🔍 Fetch Info';
       }
     }
 
+    // --- CUT CLIP & REAL-TIME PERCENTAGE TRACKING ---
     async function handleCut() {
       const url = document.getElementById('urlInput').value.trim();
       const start = document.getElementById('startTime').value.trim();
@@ -819,17 +1204,25 @@
       const cutBtnText = document.getElementById('cutBtnText');
       const resultBlock = document.getElementById('resultBlock');
       const statusText = document.getElementById('statusText');
+      const percentBadge = document.getElementById('percentBadge');
       const progressBar = document.getElementById('progressBar');
-      const videoPlayer = document.getElementById('videoPlayer');
+      const resultVideoPlayer = document.getElementById('resultVideoPlayer');
       const downloadLink = document.getElementById('downloadLink');
+      const autoDownloadNotice = document.getElementById('autoDownloadNotice');
 
       cutBtn.disabled = true;
-      cutBtnText.innerHTML = '<span class="spinner"></span> Trimming Segment...';
+      cutBtnText.innerHTML = '<span class="spinner"></span> Trimming Clip...';
       resultBlock.style.display = 'block';
-      videoPlayer.style.display = 'none';
+      resultVideoPlayer.style.display = 'none';
       downloadLink.style.display = 'none';
-      progressBar.style.width = '15%';
-      statusText.textContent = 'Contacting server and slicing stream section...';
+      autoDownloadNotice.style.display = 'none';
+      
+      progressBar.style.width = '5%';
+      percentBadge.textContent = '5%';
+      statusText.textContent = 'Initiating cloud video slicer...';
+
+      // Smooth scroll down to progress block
+      resultBlock.scrollIntoView({ behavior: 'smooth' });
 
       try {
         const resp = await fetch(`${API}/clip`, {
@@ -853,34 +1246,64 @@
       }
     }
 
+    // Auto-trigger browser download when clip hits 100%
+    function autoDownloadFile(url, filename) {
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename || 'kick_clip.mp4';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch (e) {
+        console.error('Auto download triggered fallback:', e);
+      }
+    }
+
     function pollStatus(jobId) {
       const statusText = document.getElementById('statusText');
+      const percentBadge = document.getElementById('percentBadge');
       const progressBar = document.getElementById('progressBar');
-      const videoPlayer = document.getElementById('videoPlayer');
+      const resultVideoPlayer = document.getElementById('resultVideoPlayer');
       const downloadLink = document.getElementById('downloadLink');
+      const autoDownloadNotice = document.getElementById('autoDownloadNotice');
       const cutBtn = document.getElementById('cutBtn');
       const cutBtnText = document.getElementById('cutBtnText');
+
+      let downloadTriggered = false;
 
       const interval = setInterval(async () => {
         try {
           const resp = await fetch(`${API}/status/${jobId}`);
           const data = await resp.json();
 
-          if (data.status === 'processing') {
-            progressBar.style.width = '50%';
-            statusText.textContent = 'Rendering and optimizing MP4 clip...';
+          const pct = Math.min(100, Math.max(0, data.progress || 0));
+          const roundedPct = Math.round(pct);
+          progressBar.style.width = `${roundedPct}%`;
+          percentBadge.textContent = `${roundedPct}%`;
+
+          if (data.status === 'processing' || data.status === 'pending') {
+            statusText.textContent = data.message || `Slicing and rendering clip: ${roundedPct}%`;
           } else if (data.status === 'completed') {
             clearInterval(interval);
             progressBar.style.width = '100%';
-            statusText.textContent = `🎉 Clip Ready! (${data.duration_str})`;
+            percentBadge.textContent = '100%';
+            statusText.textContent = `🎉 100% Complete! Clip Ready (${data.duration_str})`;
 
             const fullDownloadUrl = `${API}${data.download_url}`;
-            videoPlayer.src = fullDownloadUrl;
-            videoPlayer.style.display = 'block';
+            resultVideoPlayer.src = fullDownloadUrl;
+            resultVideoPlayer.style.display = 'block';
 
             document.getElementById('fileSize').textContent = `${data.size_mb} MB`;
             downloadLink.href = fullDownloadUrl;
             downloadLink.style.display = 'inline-flex';
+            autoDownloadNotice.style.display = 'flex';
+
+            // Automatic Download Triggered at 100%
+            if (!downloadTriggered) {
+              downloadTriggered = true;
+              autoDownloadFile(fullDownloadUrl, data.filename);
+            }
 
             cutBtn.disabled = false;
             cutBtnText.innerHTML = '✂️ Cut Clip Now';
@@ -896,7 +1319,7 @@
           cutBtn.disabled = false;
           cutBtnText.innerHTML = '✂️ Cut Clip Now';
         }
-      }, 1500);
+      }, 1000);
     }
   </script>
 </body>

@@ -12,7 +12,7 @@ demo = gr.Interface(
     inputs=gr.Textbox(label="Status Check", value="ping"),
     outputs=gr.Textbox(label="Response"),
     title="⚡ KickCutter API Server",
-    description="Backend API for [kickcuttr.pages.dev](https://kickcuttr.pages.dev)"
+    description="Backend API for [kickcutter.pages.dev](https://kickcutter.pages.dev)"
 )
 
 if __name__ == "__main__":

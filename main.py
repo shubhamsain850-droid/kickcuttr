@@ -1,10 +1,10 @@
 """
 KickCutter Backend API (FastAPI)
 Provides endpoints for:
-- POST /info: Get video title, thumbnail, duration, streamer name.
-- POST /clip: Start background video clipping job.
-- GET /status/{job_id}: Check job status, progress, download URL.
-- GET /download/{clip_id}: Download or stream trimmed MP4 video.
+- POST /info: Get video title, thumbnail, duration, streamer name, resolutions, preview URL.
+- POST /clip: Start background video clipping job with real-time percentage tracking.
+- GET /status/{job_id}: Check job status, progress percentage (0-100%), download URL.
+- GET /download/{filename}: Download trimmed MP4 video file.
 - GET /health: API health check.
 """
 
@@ -54,7 +54,7 @@ class ClipRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "KickCutter API", "version": "1.0.0"}
+    return {"status": "ok", "service": "KickCutter API", "version": "1.1.0"}
 
 @app.get("/health")
 def health():
@@ -79,24 +79,36 @@ def get_info(req: InfoRequest):
         "duration_str": info.get("duration_str", "00:00"),
         "thumbnail": info.get("thumbnail"),
         "is_live": info.get("is_live", False),
+        "preview_url": info.get("preview_url", ""),
+        "available_resolutions": info.get("available_resolutions", []),
+        "slug": info.get("slug", ""),
         "webpage_url": info.get("webpage_url", url)
     }
 
 def run_clip_job(job_id: str, url: str, start: str, end: str, quality: str):
     jobs[job_id]["status"] = "processing"
-    jobs[job_id]["progress"] = 25
+    jobs[job_id]["progress"] = 5.0
+    jobs[job_id]["message"] = "Starting stream slicer..."
+
+    def on_progress(pct: float, message: str):
+        if job_id in jobs:
+            jobs[job_id]["progress"] = round(pct, 1)
+            jobs[job_id]["message"] = message
+
     try:
         success, msg, meta = clip_kick_video(
             url=url,
             start_time=start,
             end_time=end,
             quality=quality,
-            output_dir=str(CLIPS_DIR)
+            output_dir=str(CLIPS_DIR),
+            progress_callback=on_progress
         )
         if success:
             filename = meta.get("filename")
             jobs[job_id]["status"] = "completed"
-            jobs[job_id]["progress"] = 100
+            jobs[job_id]["progress"] = 100.0
+            jobs[job_id]["message"] = "100% Complete! Ready for download."
             jobs[job_id]["file_path"] = meta.get("file_path")
             jobs[job_id]["filename"] = filename
             jobs[job_id]["size_mb"] = meta.get("size_mb")
@@ -130,7 +142,8 @@ def start_clip(req: ClipRequest, bg_tasks: BackgroundTasks):
     jobs[job_id] = {
         "job_id": job_id,
         "status": "pending",
-        "progress": 5,
+        "progress": 5.0,
+        "message": "Queued for processing...",
         "created_at": datetime.datetime.now().isoformat()
     }
 
@@ -155,4 +168,3 @@ def download_clip(filename: str):
         filename=safe_name,
         headers={"Content-Disposition": f'attachment; filename="{safe_name}"'}
     )
-
