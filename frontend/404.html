@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>404 — Page Not Found | KickCutter</title>
+  <meta name="robots" content="noindex, follow">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090c10;
+      --card-bg: #111620;
+      --card-border: #1e2636;
+      --accent: #53fc18;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      text-align: center;
+    }
+    header {
+      padding: 1.5rem 2rem;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .logo {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #fff;
+      text-decoration: none;
+    }
+    .logo span { color: var(--accent); }
+    main {
+      padding: 4rem 1.5rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .error-code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 6rem;
+      font-weight: 800;
+      color: var(--accent);
+      line-height: 1;
+      margin-bottom: 1rem;
+      text-shadow: 0 0 20px rgba(83, 252, 24, 0.4);
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 0.8rem;
+    }
+    p {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-bottom: 2rem;
+    }
+    .btn-group {
+      display: flex;
+      gap: 1rem;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .btn {
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      padding: 0.85rem 1.75rem;
+      border-radius: 10px;
+      text-decoration: none;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.9; transform: translateY(-2px); }
+    .btn-secondary {
+      background: #182233;
+      color: #fff;
+      border: 1px solid #283852;
+    }
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 2rem 1.5rem;
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/" class="logo">⚡ Kick<span>Cutter</span></a>
+  </header>
+
+  <main>
+    <div class="error-code">404</div>
+    <h1>Page Not Found</h1>
+    <p>The page or clip URL you are looking for doesn't exist, has been moved, or expired from server cache.</p>
+    <div class="btn-group">
+      <a href="/" class="btn">⚡ Go to Homepage</a>
+      <a href="/kick-clip-cutter" class="btn btn-secondary">✂️ Kick Clip Cutter</a>
+      <a href="/kick-vod-downloader" class="btn btn-secondary">📥 VOD Downloader</a>
+    </div>
+  </main>
+
+  <footer>
+    <p>&copy; 2026 KickCutter &bull; Free Online Kick Video Clipper.</p>
+  </footer>
+</body>
+</html>
