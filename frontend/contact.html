@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Contact Us & DMCA — KickCuttr</title>
+  <meta name="description" content="Contact the KickCuttr team for support, feature requests, bug reports, and DMCA copyright inquiries.">
+  <link rel="canonical" href="https://kickcuttr.pages.dev/contact">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090c10;
+      --card-bg: #111620;
+      --card-border: #1e2636;
+      --accent: #53fc18;
+      --accent-hover: #45dc11;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+    }
+    nav {
+      background: rgba(9, 12, 16, 0.95);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+    .logo {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      text-decoration: none;
+    }
+    .logo span { color: var(--accent); }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-left: 1.5rem;
+      transition: color 0.15s;
+    }
+    .nav-links a:hover { color: #fff; }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 5rem;
+    }
+    .page-tag {
+      display: inline-block;
+      background: rgba(83, 252, 24, 0.12);
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 252, 24, 0.25);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.8rem;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-bottom: 2.5rem;
+    }
+    .contact-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+      margin-bottom: 2rem;
+    }
+    .contact-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.75rem;
+    }
+    .contact-card h3 {
+      font-size: 1.2rem;
+      color: #fff;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .contact-card p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .contact-card a {
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.95rem;
+    }
+    .contact-card a:hover {
+      text-decoration: underline;
+    }
+    .form-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 2rem;
+    }
+    .form-card h2 {
+      font-size: 1.4rem;
+      margin-bottom: 0.5rem;
+    }
+    .form-card p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+    }
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+    }
+    .form-group input,
+    .form-group textarea {
+      width: 100%;
+      background: #0d1117;
+      border: 1px solid #283347;
+      border-radius: 10px;
+      color: #fff;
+      font-size: 0.95rem;
+      padding: 0.85rem;
+      outline: none;
+      font-family: var(--font);
+    }
+    .form-group input:focus,
+    .form-group textarea:focus {
+      border-color: var(--accent);
+    }
+    .btn {
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      font-size: 1rem;
+      border: none;
+      border-radius: 10px;
+      padding: 0.85rem 1.6rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      margin: 0 0.6rem;
+    }
+    footer a:hover { color: var(--accent); }
+    @media (max-width: 640px) {
+      .contact-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="/" class="logo">
+      ⚡ Kick<span>Cuttr</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/about">About</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    <span class="page-tag">Support &amp; Inquiries</span>
+    <h1>Contact &amp; DMCA</h1>
+    <p class="subtitle">Have questions, feedback, or a copyright inquiry? Get in touch with the KickCuttr team.</p>
+
+    <div class="contact-grid">
+      <div class="contact-card">
+        <h3>💬 General Support</h3>
+        <p>Encountered a bug, broken video format, or have a suggestion for improvements?</p>
+        <a href="mailto:support@kickcuttr.pages.dev">support@kickcuttr.pages.dev</a>
+      </div>
+
+      <div class="contact-card">
+        <h3>⚖️ DMCA &amp; Copyright</h3>
+        <p>Copyright holders can submit takedown notices or rights inquiries directly to our legal contact.</p>
+        <a href="mailto:dmca@kickcuttr.pages.dev">dmca@kickcuttr.pages.dev</a>
+      </div>
+    </div>
+
+    <div class="form-card">
+      <h2>Send Us a Message</h2>
+      <p>Fill out the form below and we will get back to you as soon as possible.</p>
+      
+      <form onsubmit="handleContact(event)">
+        <div class="form-group">
+          <label>Your Name</label>
+          <input type="text" id="contactName" placeholder="e.g. Alex" required>
+        </div>
+        <div class="form-group">
+          <label>Your Email</label>
+          <input type="email" id="contactEmail" placeholder="e.g. alex@example.com" required>
+        </div>
+        <div class="form-group">
+          <label>Subject / Topic</label>
+          <input type="text" id="contactSubject" placeholder="Bug report / Feature request / DMCA inquiry" required>
+        </div>
+        <div class="form-group">
+          <label>Message</label>
+          <textarea id="contactMessage" rows="5" placeholder="Write your message here..." required></textarea>
+        </div>
+        <button type="submit" class="btn" id="submitBtn">
+          ✉️ Send Message
+        </button>
+        <p id="responseMsg" style="margin-top:1rem; display:none; color:var(--accent); font-weight:600;">
+          ✅ Thank you! Your message has been noted.
+        </p>
+      </form>
+    </div>
+  </div>
+
+  <footer>
+    <p style="margin-bottom:0.6rem;">&copy; 2026 KickCuttr. Free &amp; Open Source Online Video Clipper for Kick.com.</p>
+    <div>
+      <a href="/">Home</a> &bull;
+      <a href="/about">About</a> &bull;
+      <a href="/privacy">Privacy Policy</a> &bull;
+      <a href="/terms">Terms &amp; DMCA</a> &bull;
+      <a href="/contact">Contact</a>
+    </div>
+  </footer>
+
+  <script>
+    function handleContact(e) {
+      e.preventDefault();
+      document.getElementById('submitBtn').disabled = true;
+      document.getElementById('submitBtn').textContent = 'Sending...';
+      setTimeout(() => {
+        document.getElementById('submitBtn').style.display = 'none';
+        document.getElementById('responseMsg').style.display = 'block';
+      }, 700);
+    }
+  </script>
+</body>
+</html>

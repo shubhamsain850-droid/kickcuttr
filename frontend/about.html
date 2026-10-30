@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About KickCuttr — Free Online Kick.com Clipper</title>
+  <meta name="description" content="Learn about KickCuttr. The fastest, free online clipper for Kick.com streams, VODs and clips designed for video editors and creators.">
+  <link rel="canonical" href="https://kickcuttr.pages.dev/about">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090c10;
+      --card-bg: #111620;
+      --card-border: #1e2636;
+      --accent: #53fc18;
+      --accent-hover: #45dc11;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+    }
+    nav {
+      background: rgba(9, 12, 16, 0.95);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+    .logo {
+      font-size: 1.4rem;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      text-decoration: none;
+    }
+    .logo span { color: var(--accent); }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-left: 1.5rem;
+      transition: color 0.15s;
+    }
+    .nav-links a:hover { color: #fff; }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 5rem;
+    }
+    .page-tag {
+      display: inline-block;
+      background: rgba(83, 252, 24, 0.12);
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 252, 24, 0.25);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.8rem;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 1.05rem;
+      margin-bottom: 2.5rem;
+    }
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+    }
+    h2 {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    h2 span { color: var(--accent); }
+    p {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      margin-bottom: 0.8rem;
+    }
+    p:last-child { margin-bottom: 0; }
+    .features-list {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .feature-item {
+      background: #0d121c;
+      border: 1px solid #1e283b;
+      border-radius: 10px;
+      padding: 1rem;
+    }
+    .feature-item strong {
+      display: block;
+      color: #fff;
+      margin-bottom: 0.3rem;
+      font-size: 0.95rem;
+    }
+    .feature-item p {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-bottom: 0;
+    }
+    .btn {
+      background: var(--accent);
+      color: #000;
+      font-weight: 700;
+      font-size: 1rem;
+      border: none;
+      border-radius: 10px;
+      padding: 0.85rem 1.6rem;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-decoration: none;
+      margin-top: 1rem;
+    }
+    .btn:hover { background: var(--accent-hover); }
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      margin: 0 0.6rem;
+    }
+    footer a:hover { color: var(--accent); }
+    @media (max-width: 640px) {
+      .features-list { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="/" class="logo">
+      ⚡ Kick<span>Cuttr</span>
+    </a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/terms">Terms</a>
+      <a href="/contact">Contact</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    <span class="page-tag">About The Project</span>
+    <h1>About KickCuttr</h1>
+    <p class="subtitle">Empowering content creators, video editors, and fans to extract high-quality Kick clips effortlessly.</p>
+
+    <div class="section-card">
+      <h2><span>⚡</span> Why We Built KickCuttr</h2>
+      <p>Kick.com streams frequently run for 6, 8, or even 12 hours. Content creators, editors, and TikTok/Reels managers often need just 30 seconds or a 2-minute highlight for social media.</p>
+      <p>Previously, editors had to download an entire 20GB+ VOD, open heavy video editing software, import the file, and export the clip — wasting hours of time and gigabytes of bandwidth. <strong>KickCuttr solves this problem in seconds.</strong></p>
+    </div>
+
+    <div class="section-card">
+      <h2><span>🛠️</span> How It Works Under The Hood</h2>
+      <p>KickCuttr does not download the full broadcast. Instead, our high-bandwidth backend queries the Kick stream HLS video manifest and directly slices only the requested video segment using optimized <code>yt-dlp</code> and <code>ffmpeg</code> stream-copying pipelines.</p>
+      
+      <div class="features-list">
+        <div class="feature-item">
+          <strong>⚡ Zero Full Downloads</strong>
+          <p>Direct segment slicing saves gigabytes of mobile data and disk space.</p>
+        </div>
+        <div class="feature-item">
+          <strong>🚫 No Watermarks</strong>
+          <p>Exported MP4 files are completely clean and ready for YouTube Shorts, Reels, and TikTok.</p>
+        </div>
+        <div class="feature-item">
+          <strong>📺 Full 1080p60 Quality</strong>
+          <p>Preserves the creator's exact original resolution, bitrate, and framerate.</p>
+        </div>
+        <div class="feature-item">
+          <strong>🔒 100% Privacy</strong>
+          <p>Clips are temporarily generated solely for download and automatically deleted.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <h2><span>❤️</span> Free &amp; Open Source</h2>
+      <p>KickCuttr is built as a free community utility. You can view, audit, or contribute to our codebase on GitHub.</p>
+      <a href="https://github.com/shubhamsain850-droid/kickcuttr" target="_blank" rel="noopener" class="btn">
+        🐙 View GitHub Repository
+      </a>
+    </div>
+  </div>
+
+  <footer>
+    <p style="margin-bottom:0.6rem;">&copy; 2026 KickCuttr. Free &amp; Open Source Online Video Clipper for Kick.com.</p>
+    <div>
+      <a href="/">Home</a> &bull;
+      <a href="/about">About</a> &bull;
+      <a href="/privacy">Privacy Policy</a> &bull;
+      <a href="/terms">Terms &amp; DMCA</a> &bull;
+      <a href="/contact">Contact</a>
+    </div>
+  </footer>
+
+</body>
+</html>
