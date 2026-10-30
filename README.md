@@ -1,5 +1,5 @@
 ---
-title: KickCuttr Api
+title: KickCutter Api
 emoji: ⚡
 colorFrom: green
 colorTo: gray
@@ -10,5 +10,5 @@ pinned: false
 license: apache-2.0
 ---
 
-# KickCuttr API Backend
+# KickCutter API Backend
 FastAPI & ZeroGPU backend for [kickcuttr.pages.dev](https://kickcuttr.pages.dev)

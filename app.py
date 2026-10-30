@@ -5,13 +5,13 @@ from main import app as fastapi_app
 # ZeroGPU binding for Hugging Face free tier
 @spaces.GPU
 def predict(prompt: str = "") -> str:
-    return "⚡ KickCuttr API Server is Active and Running with ZeroGPU!"
+    return "⚡ KickCutter API Server is Active and Running with ZeroGPU!"
 
 demo = gr.Interface(
     fn=predict,
     inputs=gr.Textbox(label="Status Check", value="ping"),
     outputs=gr.Textbox(label="Response"),
-    title="⚡ KickCuttr API Server",
+    title="⚡ KickCutter API Server",
     description="Backend API for [kickcuttr.pages.dev](https://kickcuttr.pages.dev)"
 )
 

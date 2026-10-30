@@ -1,5 +1,5 @@
 """
-KickCuttr Backend API (FastAPI)
+KickCutter Backend API (FastAPI)
 Provides endpoints for:
 - POST /info: Get video title, thumbnail, duration, streamer name.
 - POST /clip: Start background video clipping job.
@@ -26,7 +26,7 @@ from kick_engine import (
     seconds_to_time
 )
 
-app = FastAPI(title="KickCuttr API", description="Backend API for Kick.com Video Trimming")
+app = FastAPI(title="KickCutter API", description="Backend API for Kick.com Video Trimming")
 
 # Enable CORS for Cloudflare Pages frontend
 app.add_middleware(
@@ -54,7 +54,7 @@ class ClipRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "KickCuttr API", "version": "1.0.0"}
+    return {"status": "ok", "service": "KickCutter API", "version": "1.0.0"}
 
 @app.get("/health")
 def health():
