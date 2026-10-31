@@ -40,14 +40,26 @@
       z-index: 100;
       backdrop-filter: blur(10px);
     }
-    .logo {
-      font-size: 1.4rem;
+        .logo {
+      font-size: 1.45rem;
       font-weight: 800;
       color: #fff;
       display: flex;
       align-items: center;
-      gap: 0.4rem;
+      gap: 0.55rem;
       text-decoration: none;
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      display: inline-block;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 8px rgba(83, 252, 24, 0.35));
+      transition: transform 0.2s ease, filter 0.2s ease;
+    }
+    .logo:hover .logo-icon {
+      transform: rotate(-6deg) scale(1.08);
+      filter: drop-shadow(0 0 14px rgba(83, 252, 24, 0.7));
     }
     .logo span { color: var(--accent); }
     .nav-links a {
@@ -172,7 +184,23 @@
 
   <nav>
     <a href="/" class="logo">
-      ⚡ Kick<span>Cutter</span>
+      <svg class="logo-icon" viewBox="0 0 64 64" fill="none">
+        <rect width="64" height="64" rx="14" fill="#090c10"/>
+        <rect x="1" y="1" width="62" height="62" rx="13" stroke="#53fc18" stroke-width="2" stroke-opacity="0.4"/>
+        <rect x="12" y="12" width="10" height="40" rx="3" fill="#53fc18"/>
+        <rect x="14.5" y="16.5" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <rect x="14.5" y="25" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <rect x="14.5" y="34.5" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <rect x="14.5" y="43" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <path d="M26 34L50 13C51.5 11.5 53 13 52 15L41 29L32 35Z" fill="#53fc18"/>
+        <path d="M26 34L50 13" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M26 30L50 51C51.5 52.5 53 51 52 49L41 35L32 29Z" fill="#53fc18"/>
+        <path d="M26 30L50 51" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="28" cy="32" r="4" fill="#090c10" stroke="#53fc18" stroke-width="2"/>
+        <circle cx="28" cy="32" r="1.5" fill="#ffffff"/>
+        <circle cx="51" cy="32" r="1.5" fill="#53fc18"/>
+      </svg>
+      Kick<span>Cutter</span>
     </a>
         <div class="nav-links">
       <a href="/">Home</a>
