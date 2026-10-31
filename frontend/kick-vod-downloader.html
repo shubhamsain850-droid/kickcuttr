@@ -503,6 +503,7 @@
       </div>
 
       <div id="trimControls" style="display: none;">
+        <!-- Interactive Range Slider Section -->
         <div class="slider-section">
           <div class="slider-header">
             <div class="slider-title">
@@ -513,20 +514,28 @@
                 ▶️ Play From Start
               </button>
               <div class="clip-duration-badge" id="selectedDurationBadge">
-                Clip: 00:01:00 (60s)
+                00:00:00 ➔ 00:01:00 (60s)
               </div>
             </div>
           </div>
+
+          <!-- Dual-Handle Range Slider -->
           <div class="range-slider-wrap">
             <div class="range-track"></div>
             <div class="range-highlight" id="sliderHighlight"></div>
             <input type="range" id="rangeStart" class="range-slider-input" min="0" max="3600" value="0" step="1">
             <input type="range" id="rangeEnd" class="range-slider-input" min="0" max="3600" value="60" step="1">
           </div>
+
+          <!-- Prominent Selected Timestamps Display -->
           <div class="slider-time-labels">
-            <span id="sliderLabelStart">00:00:00</span>
-            <span style="color: #64748b;">Set download range</span>
-            <span id="sliderLabelEnd">01:00:00</span>
+            <div>Selected Start: <strong id="sliderLabelStart" style="color: var(--accent); font-size: 1rem; font-family: var(--mono);">00:00:00</strong></div>
+            <div id="sliderLabelMid" style="color: #cbd5e1; font-weight: 600;">Clip: <span id="sliderDurationDisplay" style="color: #fff; font-family: var(--mono);">00:01:00 (60s)</span></div>
+            <div>Selected End: <strong id="sliderLabelEnd" style="color: var(--accent); font-size: 1rem; font-family: var(--mono);">00:01:00</strong></div>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 0.76rem; color: #64748b; font-family: var(--mono); margin-top: 5px; padding: 0 2px;">
+            <span>00:00:00 (Video Start)</span>
+            <span id="totalVideoTimeLabel">Total Duration: 00:00:00</span>
           </div>
         </div>
 
@@ -673,6 +682,8 @@
       return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     }
 
+    // --- RANGE SLIDER SYNC & FAST PREVIEW CONTROLS ---
+    // --- RANGE SLIDER SYNC & FAST PREVIEW CONTROLS ---
     const rangeStart = document.getElementById('rangeStart');
     const rangeEnd = document.getElementById('rangeEnd');
     const sliderHighlight = document.getElementById('sliderHighlight');
@@ -682,6 +693,15 @@
     const previewVideo = document.getElementById('previewVideo');
 
     let isSeekingFromCode = false;
+
+    function seekPreviewTo(sec) {
+      if (!previewVideo) return;
+      isSeekingFromCode = true;
+      try {
+        previewVideo.currentTime = sec;
+      } catch (e) {}
+      setTimeout(() => { isSeekingFromCode = false; }, 100);
+    }
 
     function playSelectedClip() {
       if (!previewVideo) return;
@@ -695,11 +715,12 @@
       let sVal = Number(rangeStart.value);
       let eVal = Number(rangeEnd.value);
 
-      if (sVal > eVal - 1) {
+      // STRICT CONSTRAINT: Start time can NEVER exceed or reach End time!
+      if (sVal >= eVal) {
         sVal = Math.max(0, eVal - 1);
         rangeStart.value = sVal;
       }
-      if (eVal < sVal + 1) {
+      if (eVal <= sVal) {
         eVal = Math.min(max, sVal + 1);
         rangeEnd.value = eVal;
       }
@@ -710,21 +731,72 @@
       sliderHighlight.style.left = `${leftPct}%`;
       sliderHighlight.style.right = `${rightPct}%`;
 
-      startTimeInput.value = secToTime(sVal);
-      endTimeInput.value = secToTime(eVal);
+      const startTimeFormatted = secToTime(sVal);
+      const endTimeFormatted = secToTime(eVal);
+
+      startTimeInput.value = startTimeFormatted;
+      endTimeInput.value = endTimeFormatted;
 
       const clipSec = Math.max(0, eVal - sVal);
-      selectedDurationBadge.textContent = `Clip: ${secToTime(clipSec)} (${clipSec}s)`;
+      const clipDurationFormatted = secToTime(clipSec);
 
-      // Immediately seek 16:9 preview video to the start timestamp!
-      if (previewVideo && !isSeekingFromCode) {
-        try {
-          previewVideo.currentTime = sVal;
-        } catch (e) {}
+      // Prominently update all labels
+      if (selectedDurationBadge) {
+        selectedDurationBadge.textContent = `${startTimeFormatted} ➔ ${endTimeFormatted} (${clipSec}s)`;
       }
+      const labelStart = document.getElementById('sliderLabelStart');
+      if (labelStart) labelStart.textContent = startTimeFormatted;
+
+      const labelEnd = document.getElementById('sliderLabelEnd');
+      if (labelEnd) labelEnd.textContent = endTimeFormatted;
+
+      const labelDur = document.getElementById('sliderDurationDisplay');
+      if (labelDur) labelDur.textContent = `${clipDurationFormatted} (${clipSec}s)`;
     }
 
-    // When user plays the video, make sure it starts at the selected start timestamp!
+    // Slider input listeners with instant seek and strict bounds
+    rangeStart.addEventListener('input', () => {
+      let sVal = Number(rangeStart.value);
+      let eVal = Number(rangeEnd.value);
+      if (sVal >= eVal) {
+        sVal = Math.max(0, eVal - 1);
+        rangeStart.value = sVal;
+      }
+      updateSliderUi();
+      seekPreviewTo(sVal);
+    });
+
+    rangeEnd.addEventListener('input', () => {
+      let sVal = Number(rangeStart.value);
+      let eVal = Number(rangeEnd.value);
+      if (eVal <= sVal) {
+        eVal = Math.min(Number(rangeEnd.max), sVal + 1);
+        rangeEnd.value = eVal;
+      }
+      updateSliderUi();
+    });
+
+    startTimeInput.addEventListener('change', () => {
+      let sVal = timeToSec(startTimeInput.value);
+      let eVal = Number(rangeEnd.value);
+      if (sVal >= eVal) sVal = Math.max(0, eVal - 1);
+      sVal = Math.max(0, sVal);
+      rangeStart.value = sVal;
+      updateSliderUi();
+      seekPreviewTo(sVal);
+    });
+
+    endTimeInput.addEventListener('change', () => {
+      let eVal = timeToSec(endTimeInput.value);
+      let sVal = Number(rangeStart.value);
+      let max = Number(rangeEnd.max) || totalVideoDuration;
+      if (eVal <= sVal) eVal = Math.min(max, sVal + 1);
+      eVal = Math.min(max, eVal);
+      rangeEnd.value = eVal;
+      updateSliderUi();
+    });
+
+    // When user plays video, start from the selected Start Timestamp!
     if (previewVideo) {
       previewVideo.addEventListener('play', () => {
         const sVal = Number(rangeStart.value) || 0;
@@ -734,13 +806,13 @@
         }
       });
 
-      // Pause when reaching the selected end timestamp!
+      // Automatically pause when reaching the selected End Timestamp!
       previewVideo.addEventListener('timeupdate', () => {
         const sVal = Number(rangeStart.value) || 0;
         const eVal = Number(rangeEnd.value) || totalVideoDuration;
         if (eVal > sVal && previewVideo.currentTime >= eVal) {
           previewVideo.pause();
-          previewVideo.currentTime = sVal;
+          previewVideo.currentTime = sVal; // Loop back ready to play again
         }
       });
     }
@@ -752,9 +824,7 @@
         let nextVal = Math.max(0, Math.min(eVal - 1, cur + delta));
         rangeStart.value = nextVal;
         updateSliderUi();
-        if (previewVideo && !isNaN(previewVideo.duration)) {
-          previewVideo.currentTime = nextVal;
-        }
+        seekPreviewTo(nextVal);
       } else {
         const max = Number(rangeEnd.max) || 3600;
         const cur = Number(rangeEnd.value) || 60;
@@ -762,9 +832,6 @@
         let nextVal = Math.min(max, Math.max(sVal + 1, cur + delta));
         rangeEnd.value = nextVal;
         updateSliderUi();
-        if (previewVideo && !isNaN(previewVideo.duration)) {
-          previewVideo.currentTime = nextVal;
-        }
       }
     }
 
@@ -775,17 +842,17 @@
       let nextEnd = Math.min(max, Math.max(sVal + 1, curEnd + delta));
       rangeEnd.value = nextEnd;
       updateSliderUi();
-      if (previewVideo && !isNaN(previewVideo.duration)) {
-        previewVideo.currentTime = nextEnd;
-      }
     }
 
     function setQuickLength(addSec) {
-      const sVal = Number(rangeStart.value), max = Number(rangeEnd.max);
-      rangeEnd.value = Math.min(max, sVal + addSec);
+      const sVal = Number(rangeStart.value);
+      const max = Number(rangeEnd.max);
+      const newEnd = Math.min(max, sVal + addSec);
+      rangeEnd.value = newEnd;
       updateSliderUi();
     }
 
+    // --- FETCH INFO ---
     async function handleFetch() {
       const url = document.getElementById('urlInput').value.trim();
       if (!url) return alert('Please enter a Kick URL');
@@ -802,16 +869,51 @@
           document.getElementById('videoStreamId').textContent = data.stream_id;
           document.getElementById('previewCard').style.display = 'block';
 
+          const overlay = document.getElementById('videoLoadingOverlay');
+          if (overlay) overlay.style.display = 'flex';
+          const hideSpinner = () => { if (overlay) overlay.style.display = 'none'; };
+
           if (data.thumbnail) previewVideo.poster = data.thumbnail;
           if (data.preview_url) {
             if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-            if (Hls.isSupported() && data.preview_url.includes('.m3u8')) {
-              hlsInstance = new Hls({ enableWorker: true, lowLatencyMode: true });
+            previewVideo.onloadedmetadata = () => {
+              hideSpinner();
+              seekPreviewTo(Number(rangeStart.value) || 0);
+            };
+            previewVideo.oncanplay = hideSpinner;
+            previewVideo.onplaying = hideSpinner;
+            setTimeout(hideSpinner, 3500);
+
+            if (Hls.isSupported() && (data.preview_url.includes('.m3u8') || data.preview_url.includes('playlist'))) {
+              hlsInstance = new Hls({
+                enableWorker: true,
+                lowLatencyMode: true,
+                capLevelToPlayerSize: true,
+                startLevel: -1,
+                maxBufferLength: 10,
+                maxMaxBufferLength: 20,
+                startFragPrefetch: true
+              });
               hlsInstance.loadSource(data.preview_url);
               hlsInstance.attachMedia(previewVideo);
+              hlsInstance.on(Hls.Events.MANIFEST_PARSED, (e, d) => {
+                hideSpinner();
+                if (hlsInstance.levels && hlsInstance.levels.length > 2) {
+                  for (let i = 0; i < hlsInstance.levels.length; i++) {
+                    if (hlsInstance.levels[i].height <= 720) {
+                      hlsInstance.currentLevel = i;
+                      break;
+                    }
+                  }
+                }
+                seekPreviewTo(Number(rangeStart.value) || 0);
+              });
+              hlsInstance.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) hideSpinner(); });
             } else if (previewVideo.canPlayType('application/vnd.apple.mpegurl') || !data.preview_url.includes('.m3u8')) {
               previewVideo.src = data.preview_url;
             }
+          } else {
+            hideSpinner();
           }
 
           const qualitySelect = document.getElementById('qualitySelect');
@@ -828,7 +930,10 @@
           rangeStart.max = totalVideoDuration; rangeEnd.max = totalVideoDuration;
           rangeStart.value = 0; rangeEnd.value = Math.min(60, totalVideoDuration);
           document.getElementById('sliderLabelStart').textContent = '00:00:00';
-          document.getElementById('sliderLabelEnd').textContent = secToTime(totalVideoDuration);
+          const tot = secToTime(totalVideoDuration);
+          const totLbl = document.getElementById('totalVideoTimeLabel');
+          if (totLbl) totLbl.textContent = `Total Duration: ${tot}`;
+          updateSliderUi();
           updateSliderUi();
           document.getElementById('trimControls').style.display = 'block';
         } else {
