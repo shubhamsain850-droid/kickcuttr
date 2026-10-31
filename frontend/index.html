@@ -399,16 +399,105 @@
       position: relative;
       background: #000;
       width: 100%;
-      max-height: 480px;
+      aspect-ratio: 16 / 9;
+      max-height: 520px;
       display: flex;
       justify-content: center;
       align-items: center;
+      overflow: hidden;
+      border-radius: 12px;
     }
     #previewVideo {
       width: 100%;
-      max-height: 480px;
+      height: 100%;
+      aspect-ratio: 16 / 9;
+      object-fit: contain;
       background: #000;
       display: block;
+    }
+    .video-spinner-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 12, 16, 0.88);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      z-index: 5;
+      transition: opacity 0.25s ease;
+    }
+    .video-spinner-icon {
+      width: 38px;
+      height: 38px;
+      border: 3px solid rgba(83, 252, 24, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .nudge-group {
+      display: inline-flex;
+      gap: 3px;
+    }
+    .nudge-btn {
+      background: #182233;
+      border: 1px solid #293852;
+      color: #94a3b8;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .nudge-btn:hover {
+      background: #243550;
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+    .video-spinner-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(9, 12, 16, 0.88);
+      backdrop-filter: blur(4px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      z-index: 5;
+      transition: opacity 0.25s ease;
+    }
+    .video-spinner-icon {
+      width: 38px;
+      height: 38px;
+      border: 3px solid rgba(83, 252, 24, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .nudge-group {
+      display: inline-flex;
+      gap: 3px;
+    }
+    .nudge-btn {
+      background: #182233;
+      border: 1px solid #293852;
+      color: #94a3b8;
+      font-family: var(--mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .nudge-btn:hover {
+      background: #243550;
+      color: var(--accent);
+      border-color: var(--accent);
     }
 
     /* Range Slider Section */
@@ -888,6 +977,10 @@
 
         <div class="video-container">
           <video id="previewVideo" controls playsinline preload="metadata"></video>
+          <div id="videoLoadingOverlay" class="video-spinner-overlay" style="display: none;">
+            <div class="video-spinner-icon"></div>
+            <span style="font-size: 0.85rem; color: #cbd5e1; font-weight: 600;">Loading 16:9 Stream Preview...</span>
+          </div>
         </div>
       </div>
 
@@ -923,11 +1016,27 @@
         <!-- Precise Input Boxes & Quality Selector -->
         <div class="controls-grid">
           <div class="control-item">
-            <label>Start Timestamp</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+              <label style="margin-bottom: 0;">Start Timestamp</label>
+              <div class="nudge-group">
+                <button type="button" class="nudge-btn" onclick="nudgeTime('start', -5)" title="Rewind 5s">-5s</button>
+                <button type="button" class="nudge-btn" onclick="nudgeTime('start', -1)" title="Rewind 1s">-1s</button>
+                <button type="button" class="nudge-btn" onclick="nudgeTime('start', 1)" title="Forward 1s">+1s</button>
+                <button type="button" class="nudge-btn" onclick="nudgeTime('start', 5)" title="Forward 5s">+5s</button>
+              </div>
+            </div>
             <input type="text" id="startTime" value="00:00:00">
           </div>
           <div class="control-item">
-            <label>End Timestamp</label>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem;">
+              <label style="margin-bottom: 0;">End Timestamp</label>
+              <div class="nudge-group">
+                <button type="button" class="nudge-btn" onclick="nudgeTime('end', -5)" title="Minus 5s">-5s</button>
+                <button type="button" class="nudge-btn" onclick="nudgeTime('end', -1)" title="Minus 1s">-1s</button>
+                <button type="button" class="nudge-btn" onclick="nudgeTime('end', 1)" title="Plus 1s">+1s</button>
+                <button type="button" class="nudge-btn" onclick="nudgeTime('end', 5)" title="Plus 5s">+5s</button>
+              </div>
+            </div>
             <input type="text" id="endTime" value="00:01:00">
           </div>
           <div class="control-item">
@@ -944,11 +1053,15 @@
         <!-- Quick Length Presets -->
         <div class="presets">
           <span style="font-size: 0.8rem; color: var(--text-muted); align-self: center;">Quick Lengths:</span>
-          <button class="pill" onclick="setQuickLength(15)">+15 sec</button>
-          <button class="pill" onclick="setQuickLength(30)">+30 sec</button>
-          <button class="pill" onclick="setQuickLength(60)">+1 min</button>
-          <button class="pill" onclick="setQuickLength(120)">+2 min</button>
-          <button class="pill" onclick="setQuickLength(300)">+5 min</button>
+          <button type="button" class="pill" onclick="adjustDuration(-5)">-5s</button>
+          <button type="button" class="pill" onclick="adjustDuration(-1)">-1s</button>
+          <button type="button" class="pill" onclick="adjustDuration(1)">+1s</button>
+          <button type="button" class="pill" onclick="adjustDuration(5)">+5s</button>
+          <button type="button" class="pill" onclick="setQuickLength(15)">+15 sec</button>
+          <button type="button" class="pill" onclick="setQuickLength(30)">+30 sec</button>
+          <button type="button" class="pill" onclick="setQuickLength(60)">+1 min</button>
+          <button type="button" class="pill" onclick="setQuickLength(120)">+2 min</button>
+          <button type="button" class="pill" onclick="setQuickLength(300)">+5 min</button>
         </div>
 
         <!-- Cut Clip Action Button -->
@@ -1323,6 +1436,41 @@
       updateSliderUi();
     });
 
+    function nudgeTime(type, delta) {
+      if (type === 'start') {
+        const cur = Number(rangeStart.value) || 0;
+        const eVal = Number(rangeEnd.value) || 60;
+        let nextVal = Math.max(0, Math.min(eVal - 1, cur + delta));
+        rangeStart.value = nextVal;
+        updateSliderUi();
+        if (previewVideo && !isNaN(previewVideo.duration)) {
+          previewVideo.currentTime = nextVal;
+        }
+      } else {
+        const max = Number(rangeEnd.max) || 3600;
+        const cur = Number(rangeEnd.value) || 60;
+        const sVal = Number(rangeStart.value) || 0;
+        let nextVal = Math.min(max, Math.max(sVal + 1, cur + delta));
+        rangeEnd.value = nextVal;
+        updateSliderUi();
+        if (previewVideo && !isNaN(previewVideo.duration)) {
+          previewVideo.currentTime = nextVal;
+        }
+      }
+    }
+
+    function adjustDuration(delta) {
+      const max = Number(rangeEnd.max) || 3600;
+      const sVal = Number(rangeStart.value) || 0;
+      const curEnd = Number(rangeEnd.value) || 60;
+      let nextEnd = Math.min(max, Math.max(sVal + 1, curEnd + delta));
+      rangeEnd.value = nextEnd;
+      updateSliderUi();
+      if (previewVideo && !isNaN(previewVideo.duration)) {
+        previewVideo.currentTime = nextEnd;
+      }
+    }
+
     function setQuickLength(addSec) {
       const sVal = Number(rangeStart.value);
       const max = Number(rangeEnd.max);
@@ -1365,9 +1513,16 @@
             liveBadge.textContent = '📼 VOD';
           }
 
-          // 2. Load Video Preview via HLS.js or native player
+          // 2. Load Video Preview via HLS.js or native player (16:9)
           const previewCard = document.getElementById('previewCard');
           previewCard.style.display = 'block';
+
+          const overlay = document.getElementById('videoLoadingOverlay');
+          if (overlay) overlay.style.display = 'flex';
+
+          const hideSpinner = () => {
+            if (overlay) overlay.style.display = 'none';
+          };
 
           if (data.thumbnail) {
             previewVideo.poster = data.thumbnail;
@@ -1379,16 +1534,33 @@
               hlsInstance = null;
             }
 
-            if (Hls.isSupported() && data.preview_url.includes('.m3u8')) {
+            previewVideo.onloadedmetadata = hideSpinner;
+            previewVideo.oncanplay = hideSpinner;
+            previewVideo.onplaying = hideSpinner;
+            setTimeout(hideSpinner, 6000); // safety fallback
+
+            if (Hls.isSupported() && (data.preview_url.includes('.m3u8') || data.preview_url.includes('playlist'))) {
               hlsInstance = new Hls({
                 enableWorker: true,
-                lowLatencyMode: true
+                lowLatencyMode: true,
+                maxBufferLength: 30
               });
               hlsInstance.loadSource(data.preview_url);
               hlsInstance.attachMedia(previewVideo);
+              hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+                hideSpinner();
+              });
+              hlsInstance.on(Hls.Events.ERROR, (event, errData) => {
+                if (errData.fatal) {
+                  hideSpinner();
+                  console.warn('HLS stream notice:', errData.type);
+                }
+              });
             } else if (previewVideo.canPlayType('application/vnd.apple.mpegurl') || !data.preview_url.includes('.m3u8')) {
               previewVideo.src = data.preview_url;
             }
+          } else {
+            hideSpinner();
           }
 
           // 3. Populate Available Resolutions dynamically
