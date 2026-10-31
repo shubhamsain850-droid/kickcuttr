@@ -493,7 +493,76 @@
     .footer-links a:hover { color: var(--accent); }
     .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(0,0,0,0.3); border-radius: 50%; border-top-color: #000; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    @media (max-width: 680px) { .input-row, .controls-grid { grid-template-columns: 1fr; flex-direction: column; } nav a { display: none; } }
+    @media (max-width: 680px) {
+      html, body { overflow-x: hidden; width: 100%; }
+      header { padding: 1rem 1rem; }
+      main { padding: 1.25rem 0.85rem 3.5rem; }
+      .hero { margin-bottom: 1.5rem; }
+      .hero-badge { font-size: 0.75rem; padding: 3px 10px; margin-bottom: 0.75rem; }
+      .hero h1 { font-size: 1.85rem; line-height: 1.22; letter-spacing: -0.5px; }
+      .hero p { font-size: 0.92rem; line-height: 1.5; }
+      .card { padding: 1.15rem 0.9rem; border-radius: 14px; margin-bottom: 2rem; }
+      .input-row { flex-direction: column; gap: 0.6rem; }
+      .input-row input[type="text"] { font-size: 16px; padding: 0.85rem 1rem; width: 100%; box-sizing: border-box; }
+      .btn { width: 100%; justify-content: center; padding: 0.9rem; font-size: 1rem; }
+      nav a:not(.nav-pill) { display: none; }
+      .nav-pill { padding: 4px 10px; font-size: 0.82rem; }
+      
+      /* Preview Card & Video */
+      .preview-card { padding: 1rem 0.85rem; }
+      .preview-title-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+      .preview-title-row h2 { font-size: 1.15rem; }
+      .preview-meta { gap: 0.5rem 1rem; font-size: 0.82rem; }
+      .video-container { border-radius: 8px; width: 100%; aspect-ratio: 16 / 9; }
+      
+      /* Slider responsive controls */
+      .slider-section { padding: 1rem 0.85rem; margin-top: 1.25rem; }
+      .slider-header { flex-direction: column; align-items: stretch; gap: 8px; }
+      .slider-header > div:last-child { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 6px; }
+      .preview-clip-btn { font-size: 0.75rem; padding: 4px 8px; }
+      .clip-duration-badge { font-size: 0.78rem; padding: 4px 8px; }
+      .range-slider-wrap { height: 44px; touch-action: pan-x; }
+      .range-slider-input::-webkit-slider-thumb { width: 28px; height: 28px; }
+      .range-slider-input::-moz-range-thumb { width: 28px; height: 28px; }
+      .slider-time-labels {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: #080d15;
+        padding: 8px 10px;
+        border-radius: 8px;
+        font-size: 0.82rem;
+        margin-top: 6px;
+      }
+      .slider-time-labels > div {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+      }
+      
+      /* Form Controls Grid */
+      .controls-grid { grid-template-columns: 1fr; gap: 0.9rem; margin-top: 1rem; }
+      .control-item label { font-size: 0.82rem; }
+      .control-item input, .control-item select { font-size: 16px; padding: 0.8rem; box-sizing: border-box; width: 100%; }
+      .nudge-group { gap: 4px; }
+      .nudge-btn { padding: 4px 8px; font-size: 0.78rem; min-height: 28px; }
+      .presets { gap: 6px; }
+      .pill { padding: 6px 10px; font-size: 0.78rem; }
+      #cutBtn { width: 100%; justify-content: center; padding: 0.95rem; font-size: 1.05rem; }
+      
+      /* Features, steps, and FAQ */
+      .section-title { font-size: 1.5rem; }
+      .section-subtitle { font-size: 0.88rem; margin-bottom: 1.5rem; }
+      .features-grid { grid-template-columns: 1fr; gap: 1rem; margin-bottom: 2.5rem; }
+      .steps-grid { grid-template-columns: 1fr; gap: 1rem; margin-bottom: 2.5rem; }
+      .feature-card, .step-card { padding: 1.25rem; }
+      .faq-tabs { gap: 6px; margin-bottom: 1rem; }
+      .faq-tab-btn { font-size: 0.78rem; padding: 6px 10px; }
+      .faq-question { padding: 0.9rem 1.1rem; font-size: 0.92rem; }
+      .faq-answer { padding: 0 1.1rem 1rem; font-size: 0.88rem; }
+      .seo-content-block { padding: 1.5rem 1rem; }
+      .footer-links { gap: 1rem; font-size: 0.82rem; }
+    } nav a { display: none; } }
   </style>
 </head>
 <body>
