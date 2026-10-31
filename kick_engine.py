@@ -1,11 +1,12 @@
 """
 KickCutter Engine - Video Clipping & Trimming for Kick.com
 Supports:
-- Kick VODs, Clips, and Livestream segment extraction.
-- Automatic extraction of video resolutions (1080p, 720p, 480p, etc.).
-- Direct stream playback preview URL generation (HLS / m3u8).
-- Real-time progress percentage callback (0% - 100%) during clipping.
-- High-speed slicing via yt-dlp and ffmpeg.
+- Kick VODs (kick.com/video/UUID or kick.com/channel/videos/UUID)
+- Direct Kick Channels & Livestreams
+- Automatic extraction of video resolutions (1080p, 720p, 480p, 360p, 160p)
+- Direct stream playback preview URL generation (HLS / m3u8) with CORS support
+- Real-time progress percentage callback (0% - 100%) during clipping
+- High-speed slicing via yt-dlp and ffmpeg
 """
 
 import os
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Dict, Any, Tuple, Callable, Optional, List
 
 KICK_API_CHANNEL = "https://kick.com/api/v2/channels/{slug}"
+KICK_API_CHANNEL_VIDEOS = "https://kick.com/api/v2/channels/{slug}/videos"
 KICK_API_VIDEO = "https://kick.com/api/v1/video/{video_id}"
 
 # -------------------------------------------------------------
@@ -59,6 +61,14 @@ def seconds_to_time(seconds: int) -> str:
 # -------------------------------------------------------------
 # KICK VIDEO & CHANNEL INFO EXTRACTOR
 # -------------------------------------------------------------
+def extract_video_uuid(url: str) -> str:
+    """Extracts video UUID from URLs like kick.com/video/UUID or kick.com/channel/videos/UUID."""
+    m = re.search(r'(?:video/|videos/)([a-zA-Z0-9_\-]+)', url)
+    if m:
+        return m.group(1)
+    return ""
+
+
 def extract_slug_from_url(url: str) -> str:
     """Extracts username slug or channel name from Kick URL."""
     url = url.strip()
@@ -87,149 +97,253 @@ def get_kick_channel_data(slug: str) -> Dict[str, Any]:
         return {}
 
 
+def get_kick_channel_videos(slug: str) -> List[Dict[str, Any]]:
+    """Fetches public recorded VODs for a channel."""
+    slug = slug.strip().lower()
+    if not slug:
+        return []
+    url = KICK_API_CHANNEL_VIDEOS.format(slug=slug)
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=8) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"[Engine] Channel videos fetch warning for '{slug}': {e}")
+        return []
+
+
 def get_default_resolutions() -> List[Dict[str, Any]]:
     return [
         {"id": "best", "height": 9999, "label": "Best Available Source (Original)", "format_id": "best"},
-        {"id": "1080p", "height": 1080, "label": "1080p Full HD (Highest)", "format_id": "1080p"},
-        {"id": "720p", "height": 720, "label": "720p HD (Balanced & Fast)", "format_id": "720p"},
-        {"id": "480p", "height": 480, "label": "480p SD (Lightweight)", "format_id": "480p"},
-        {"id": "360p", "height": 360, "label": "360p (Data Saver)", "format_id": "360p"},
+        {"id": "1080p", "height": 1080, "label": "1080p60 Full HD", "format_id": "1080p"},
+        {"id": "720p", "height": 720, "label": "720p60 HD", "format_id": "720p"},
+        {"id": "480p", "height": 480, "label": "480p SD", "format_id": "480p"},
+        {"id": "360p", "height": 360, "label": "360p", "format_id": "360p"},
+        {"id": "160p", "height": 160, "label": "160p (Data Saver)", "format_id": "160p"},
     ]
 
 
-def parse_available_resolutions(raw_formats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Extracts distinct available video resolutions from yt-dlp formats array."""
-    if not raw_formats:
-        return get_default_resolutions()
-
-    resolutions = []
-    seen = set()
-
-    # Always add 'best' option first
-    resolutions.append({
-        "id": "best",
-        "height": 9999,
-        "label": "Best Available Source (Original Quality)",
-        "format_id": "best"
-    })
-
-    # Sort formats from highest height to lowest
-    sorted_formats = sorted(raw_formats, key=lambda f: f.get("height") or 0, reverse=True)
-
-    for f in sorted_formats:
-        h = f.get("height")
-        if not h or h <= 0:
-            continue
-        
-        fid = f.get("format_id") or str(h)
-        fps = f.get("fps")
-        fps_str = f"{int(fps)}" if fps and fps >= 50 else ""
-        
-        res_key = f"{h}p{fps_str}"
-        if res_key in seen:
-            continue
-        seen.add(res_key)
-
-        if h >= 1080:
-            label = f"1080p{fps_str} Full HD"
-        elif h >= 720:
-            label = f"720p{fps_str} HD"
-        elif h >= 480:
-            label = f"480p SD"
-        elif h >= 360:
-            label = f"360p"
-        elif h >= 160:
-            label = f"160p"
-        else:
-            label = f"{h}p"
-
-        resolutions.append({
-            "id": fid if fid.endswith("p") or "p" in fid else f"{h}p",
-            "height": h,
-            "label": label,
-            "format_id": fid
+def parse_m3u8_resolutions(m3u8_url: str) -> List[Dict[str, Any]]:
+    """Parses available resolutions directly from an HLS master playlist."""
+    try:
+        req = urllib.request.Request(m3u8_url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         })
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            content = resp.read().decode("utf-8")
+        
+        resolutions = [
+            {"id": "best", "height": 9999, "label": "⚡ Best Available Source (Original Quality)", "format_id": "best"}
+        ]
+        
+        matches = re.findall(r'RESOLUTION=(\d+)x(\d+)(?:,VIDEO="([^"]+)")?(?:,FRAME-RATE=([\d\.]+))?', content)
+        seen = set()
+        
+        # Sort descending by height
+        matches = sorted(matches, key=lambda m: int(m[1]), reverse=True)
+        for w, h, vname, fps in matches:
+            h_int = int(h)
+            fps_int = int(float(fps)) if fps else 0
+            fps_str = f"{fps_int}" if fps_int >= 50 else ""
+            key = f"{h_int}p{fps_str}"
+            if key in seen:
+                continue
+            seen.add(key)
+            
+            if h_int >= 1080:
+                label = f"⚡ 1080p{fps_str} Full HD"
+            elif h_int >= 720:
+                label = f"⚡ 720p{fps_str} HD"
+            elif h_int >= 480:
+                label = f"⚡ 480p SD"
+            else:
+                label = f"⚡ {h_int}p"
+                
+            resolutions.append({
+                "id": f"{h_int}p",
+                "height": h_int,
+                "label": label,
+                "format_id": f"{h_int}p"
+            })
+            
+        if len(resolutions) > 1:
+            return resolutions
+    except Exception as e:
+        print(f"[Engine] Could not parse m3u8 resolutions: {e}")
+        
+    return get_default_resolutions()
 
-    return resolutions if len(resolutions) > 1 else get_default_resolutions()
+
+def get_kick_vod_data(video_uuid: str) -> Optional[Dict[str, Any]]:
+    """Fetches VOD information directly from Kick API v1."""
+    url = KICK_API_VIDEO.format(video_id=video_uuid)
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            livestream = data.get("livestream") or {}
+            channel = livestream.get("channel") or {}
+            
+            # Duration in seconds (Kick API returns ms)
+            dur_ms = livestream.get("duration") or 0
+            dur_sec = int(dur_ms / 1000) if dur_ms > 10000 else int(dur_ms)
+            
+            thumb = None
+            if livestream.get("thumbnail"):
+                t = livestream["thumbnail"]
+                thumb = t.get("src") if isinstance(t, dict) else t
+            elif data.get("thumb"):
+                thumb = data.get("thumb")
+            
+            source = data.get("source") # master.m3u8
+            resolutions = parse_m3u8_resolutions(source) if source else get_default_resolutions()
+            
+            creator_name = channel.get("user", {}).get("username") or channel.get("slug") or "Creator"
+            title = livestream.get("session_title") or f"{creator_name}'s Kick VOD"
+            
+            return {
+                "success": True,
+                "title": title,
+                "uploader": creator_name,
+                "stream_id": str(data.get("id") or livestream.get("id") or video_uuid),
+                "duration": dur_sec,
+                "duration_str": seconds_to_time(dur_sec),
+                "thumbnail": thumb,
+                "preview_url": source,
+                "available_resolutions": resolutions,
+                "is_live": False,
+                "slug": channel.get("slug", ""),
+                "webpage_url": f"https://kick.com/video/{video_uuid}",
+                "source_m3u8": source
+            }
+    except Exception as e:
+        print(f"[Engine] Error fetching VOD {video_uuid}: {e}")
+        return None
 
 
 def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
     """
     Extracts complete info (Title, Uploader, Duration, Stream ID, Thumbnail,
-    Available Resolutions, and Stream Preview URL) using yt-dlp and Kick public APIs.
+    Available Resolutions, and Stream Preview URL) for Kick VODs, Channels, and Streams.
     """
     target = url_or_channel.strip()
+
+    # 1. Check if the input is a direct Kick VOD URL (kick.com/video/UUID or /videos/UUID)
+    video_uuid = extract_video_uuid(target)
+    if video_uuid:
+        vod_data = get_kick_vod_data(video_uuid)
+        if vod_data and vod_data.get("success"):
+            return vod_data
+
+    # 2. Extract Channel Slug
     if not target.startswith("http"):
         slug = target.replace("@", "")
         target = f"https://kick.com/{slug}"
     else:
         slug = extract_slug_from_url(target)
 
-    # 1. Fetch channel API data if slug exists (fast fallback)
+    # 3. Fetch channel data
     channel_api_data = {}
     if slug:
         channel_api_data = get_kick_channel_data(slug)
 
     livestream = channel_api_data.get("livestream") or {}
     stream_id = livestream.get("id") or channel_api_data.get("id") or "N/A"
+    is_live = livestream.get("is_live", False) if isinstance(livestream, dict) else False
 
-    # 2. Query yt-dlp for video metadata and available stream formats
+    # If channel is currently LIVE, return livestream details
+    if is_live and livestream:
+        preview_url = channel_api_data.get("playback_url") or livestream.get("source") or ""
+        livestream_thumb = livestream.get("thumbnail")
+        thumb = livestream_thumb.get("url") if isinstance(livestream_thumb, dict) else livestream_thumb
+        dur = livestream.get("duration") or 0
+        resolutions = parse_m3u8_resolutions(preview_url) if preview_url else get_default_resolutions()
+
+        return {
+            "success": True,
+            "title": livestream.get("session_title") or f"{slug.upper()}'s Live Stream",
+            "uploader": channel_api_data.get("user", {}).get("username") or slug,
+            "stream_id": str(stream_id),
+            "duration": dur,
+            "duration_str": "🔴 Live Stream",
+            "thumbnail": thumb,
+            "webpage_url": target,
+            "is_live": True,
+            "preview_url": preview_url,
+            "available_resolutions": resolutions,
+            "slug": slug,
+            "source_m3u8": preview_url
+        }
+
+    # If channel is OFFLINE, fetch their most recent recorded VOD so user can clip it!
+    if slug:
+        recent_videos = get_kick_channel_videos(slug)
+        if recent_videos:
+            latest_v = recent_videos[0]
+            vid_uuid = latest_v.get("video", {}).get("uuid") if isinstance(latest_v.get("video"), dict) else None
+            if not vid_uuid and latest_v.get("uuid"):
+                vid_uuid = latest_v.get("uuid")
+
+            if vid_uuid:
+                vod_data = get_kick_vod_data(vid_uuid)
+                if vod_data and vod_data.get("success"):
+                    vod_data["title"] = f"{vod_data['title']} (Latest Broadcast)"
+                    return vod_data
+
+            # Direct fallback from latest video item
+            source_url = latest_v.get("source") or ""
+            dur_ms = latest_v.get("duration") or 0
+            dur_sec = int(dur_ms / 1000) if dur_ms > 10000 else int(dur_ms)
+            thumb = latest_v.get("thumbnail")
+            if isinstance(thumb, dict):
+                thumb = thumb.get("src") or thumb.get("url")
+
+            return {
+                "success": True,
+                "title": latest_v.get("session_title") or f"{slug.upper()}'s Recent Broadcast",
+                "uploader": channel_api_data.get("user", {}).get("username") or slug,
+                "stream_id": str(latest_v.get("id") or stream_id),
+                "duration": dur_sec,
+                "duration_str": seconds_to_time(dur_sec),
+                "thumbnail": thumb,
+                "webpage_url": target,
+                "is_live": False,
+                "preview_url": source_url,
+                "available_resolutions": parse_m3u8_resolutions(source_url) if source_url else get_default_resolutions(),
+                "slug": slug,
+                "source_m3u8": source_url
+            }
+
+    # 4. Fallback to yt-dlp metadata
     cmd = ["yt-dlp", "--dump-json", "--no-warnings", target]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if result.returncode == 0 and result.stdout.strip():
             info = json.loads(result.stdout.strip().splitlines()[0])
             duration = info.get("duration") or 0
-            formats = info.get("formats") or []
-            resolutions = parse_available_resolutions(formats)
-            
-            # Preview URL priority: manifest_url -> direct stream url -> channel playback_url
             preview_url = info.get("manifest_url") or info.get("url") or ""
-            if not preview_url and channel_api_data:
-                preview_url = channel_api_data.get("playback_url") or (livestream.get("source") if isinstance(livestream, dict) else "")
-
-            thumb = info.get("thumbnail")
-            if not thumb and livestream:
-                livestream_thumb = livestream.get("thumbnail")
-                thumb = livestream_thumb.get("url") if isinstance(livestream_thumb, dict) else livestream_thumb
-
             return {
                 "success": True,
-                "title": info.get("title") or info.get("fulltitle") or (livestream.get("session_title") if livestream else f"{slug.upper()}'s Kick Stream"),
-                "uploader": info.get("uploader") or info.get("channel") or (channel_api_data.get("user", {}).get("username") if channel_api_data else slug),
+                "title": info.get("title") or info.get("fulltitle") or "Kick Stream",
+                "uploader": info.get("uploader") or info.get("channel") or slug or "Creator",
                 "stream_id": str(info.get("display_id") or stream_id),
                 "duration": duration,
-                "duration_str": seconds_to_time(duration) if duration else ("Live Stream" if info.get("is_live") else "00:00:00"),
-                "thumbnail": thumb,
+                "duration_str": seconds_to_time(duration) if duration else "00:00:00",
+                "thumbnail": info.get("thumbnail"),
                 "webpage_url": info.get("webpage_url") or target,
                 "is_live": info.get("is_live", False),
                 "preview_url": preview_url,
-                "available_resolutions": resolutions,
-                "slug": slug
+                "available_resolutions": parse_m3u8_resolutions(preview_url) if preview_url else get_default_resolutions(),
+                "slug": slug,
+                "source_m3u8": preview_url
             }
     except Exception as e:
         print(f"[Engine] yt-dlp metadata error: {e}")
-
-    # Fallback to channel API data if yt-dlp was slow or timed out
-    if channel_api_data:
-        preview_url = channel_api_data.get("playback_url") or (livestream.get("source") if isinstance(livestream, dict) else "")
-        livestream_thumb = livestream.get("thumbnail")
-        thumb = livestream_thumb.get("url") if isinstance(livestream_thumb, dict) else livestream_thumb
-
-        return {
-            "success": True,
-            "title": livestream.get("session_title") or f"{slug.upper()}'s Kick Stream",
-            "uploader": channel_api_data.get("user", {}).get("username") or slug,
-            "stream_id": str(stream_id),
-            "duration": livestream.get("duration") or 0,
-            "duration_str": "Live Stream" if livestream.get("is_live") else "Recorded VOD",
-            "thumbnail": thumb,
-            "webpage_url": target,
-            "is_live": livestream.get("is_live", False),
-            "preview_url": preview_url,
-            "available_resolutions": get_default_resolutions(),
-            "slug": slug
-        }
 
     return {
         "success": False,
@@ -250,7 +364,7 @@ def clip_kick_video(
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Clips a Kick VOD or stream segment between start_time and end_time.
-    Uses yt-dlp with --download-sections and pipes real-time progress percentage (0-100%).
+    Uses direct master.m3u8 if available or URL via yt-dlp --download-sections.
     """
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -269,23 +383,29 @@ def clip_kick_video(
     out_filename = f"kick_clip_{timestamp_str}.mp4"
     final_output = out_path / out_filename
 
+    # If URL is a Kick webpage, resolve it to direct m3u8 source for 100% reliable cutting
+    target_media = url.strip()
+    if not target_media.endswith(".m3u8"):
+        resolved_info = get_kick_info(target_media)
+        if resolved_info.get("success") and resolved_info.get("source_m3u8"):
+            target_media = resolved_info["source_m3u8"]
+
     # Format quality selector for yt-dlp
     q_lower = quality.lower().strip()
     if q_lower == "best":
-        format_selector = "bestvideo+bestaudio/best"
+        format_selector = "best"
     elif "1080" in q_lower:
-        format_selector = "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+        format_selector = "best[height<=1080]/best"
     elif "720" in q_lower:
-        format_selector = "bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+        format_selector = "best[height<=720]/best"
     elif "480" in q_lower:
-        format_selector = "bestvideo[height<=480]+bestaudio/best[height<=480]/best"
+        format_selector = "best[height<=480]/best"
     elif "360" in q_lower:
-        format_selector = "bestvideo[height<=360]+bestaudio/best[height<=360]/best"
+        format_selector = "best[height<=360]/best"
     elif "160" in q_lower:
-        format_selector = "bestvideo[height<=160]+bestaudio/best[height<=160]/best"
+        format_selector = "best[height<=160]/best"
     else:
-        # User picked a specific format_id
-        format_selector = f"{quality}/bestvideo+bestaudio/best"
+        format_selector = f"{quality}/best"
 
     section_arg = f"*{seconds_to_time(start_sec)}-{seconds_to_time(end_sec)}"
 
@@ -298,7 +418,7 @@ def clip_kick_video(
         "--no-playlist",
         "--merge-output-format", "mp4",
         "--newline",
-        url
+        target_media
     ]
 
     if progress_callback:
