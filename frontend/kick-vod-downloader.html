@@ -330,6 +330,25 @@
       margin-top: 1.5rem;
     }
     .slider-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+    .preview-clip-btn {
+      background: rgba(83, 252, 24, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+    .preview-clip-btn:hover {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 12px rgba(83, 252, 24, 0.4);
+    }
     .clip-duration-badge {
       background: rgba(83, 252, 24, 0.15);
       color: var(--accent);
@@ -486,8 +505,17 @@
       <div id="trimControls" style="display: none;">
         <div class="slider-section">
           <div class="slider-header">
-            <span style="font-size: 0.95rem; font-weight: 700; color: #fff;">🎬 Video Segment / Duration</span>
-            <div class="clip-duration-badge" id="selectedDurationBadge">Range: 00:01:00 (60s)</div>
+            <div class="slider-title">
+              <span>🎬 Slide to Set Clip Range</span>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="button" class="preview-clip-btn" onclick="playSelectedClip()" title="Play preview from the selected start timestamp">
+                ▶️ Play From Start
+              </button>
+              <div class="clip-duration-badge" id="selectedDurationBadge">
+                Clip: 00:01:00 (60s)
+              </div>
+            </div>
           </div>
           <div class="range-slider-wrap">
             <div class="range-track"></div>
@@ -653,32 +681,70 @@
     const selectedDurationBadge = document.getElementById('selectedDurationBadge');
     const previewVideo = document.getElementById('previewVideo');
 
-    function updateSliderUi() {
-      const max = Number(rangeStart.max) || 3600;
-      let sVal = Number(rangeStart.value), eVal = Number(rangeEnd.value);
-      if (sVal > eVal - 1) { sVal = Math.max(0, eVal - 1); rangeStart.value = sVal; }
-      if (eVal < sVal + 1) { eVal = Math.min(max, sVal + 1); rangeEnd.value = eVal; }
-      const leftPct = (sVal / max) * 100, rightPct = 100 - (eVal / max) * 100;
-      sliderHighlight.style.left = `${leftPct}%`;
-      sliderHighlight.style.right = `${rightPct}%`;
-      startTimeInput.value = secToTime(sVal);
-      endTimeInput.value = secToTime(eVal);
-      const clipSec = Math.max(0, eVal - sVal);
-      selectedDurationBadge.textContent = `Range: ${secToTime(clipSec)} (${clipSec}s)`;
+    let isSeekingFromCode = false;
+
+    function playSelectedClip() {
+      if (!previewVideo) return;
+      const sVal = Number(rangeStart.value) || 0;
+      previewVideo.currentTime = sVal;
+      previewVideo.play().catch(e => console.log('Playback error:', e));
     }
 
-    rangeStart.addEventListener('input', () => {
-      if (Number(rangeStart.value) >= Number(rangeEnd.value)) rangeStart.value = Number(rangeEnd.value) - 1;
-      updateSliderUi();
-      if (previewVideo && previewVideo.duration) previewVideo.currentTime = Number(rangeStart.value);
-    });
-    rangeEnd.addEventListener('input', () => {
-      if (Number(rangeEnd.value) <= Number(rangeStart.value)) rangeEnd.value = Number(rangeStart.value) + 1;
-      updateSliderUi();
-      if (previewVideo && previewVideo.duration) previewVideo.currentTime = Number(rangeEnd.value);
-    });
-    startTimeInput.addEventListener('change', () => { rangeStart.value = timeToSec(startTimeInput.value); updateSliderUi(); });
-    endTimeInput.addEventListener('change', () => { rangeEnd.value = timeToSec(endTimeInput.value); updateSliderUi(); });
+    function updateSliderUi() {
+      const max = Number(rangeStart.max) || 3600;
+      let sVal = Number(rangeStart.value);
+      let eVal = Number(rangeEnd.value);
+
+      if (sVal > eVal - 1) {
+        sVal = Math.max(0, eVal - 1);
+        rangeStart.value = sVal;
+      }
+      if (eVal < sVal + 1) {
+        eVal = Math.min(max, sVal + 1);
+        rangeEnd.value = eVal;
+      }
+
+      const leftPct = (sVal / max) * 100;
+      const rightPct = 100 - (eVal / max) * 100;
+
+      sliderHighlight.style.left = `${leftPct}%`;
+      sliderHighlight.style.right = `${rightPct}%`;
+
+      startTimeInput.value = secToTime(sVal);
+      endTimeInput.value = secToTime(eVal);
+
+      const clipSec = Math.max(0, eVal - sVal);
+      selectedDurationBadge.textContent = `Clip: ${secToTime(clipSec)} (${clipSec}s)`;
+
+      // Immediately seek 16:9 preview video to the start timestamp!
+      if (previewVideo && !isSeekingFromCode) {
+        try {
+          previewVideo.currentTime = sVal;
+        } catch (e) {}
+      }
+    }
+
+    // When user plays the video, make sure it starts at the selected start timestamp!
+    if (previewVideo) {
+      previewVideo.addEventListener('play', () => {
+        const sVal = Number(rangeStart.value) || 0;
+        const eVal = Number(rangeEnd.value) || totalVideoDuration;
+        if (previewVideo.currentTime < sVal - 0.5 || previewVideo.currentTime >= eVal - 0.5) {
+          previewVideo.currentTime = sVal;
+        }
+      });
+
+      // Pause when reaching the selected end timestamp!
+      previewVideo.addEventListener('timeupdate', () => {
+        const sVal = Number(rangeStart.value) || 0;
+        const eVal = Number(rangeEnd.value) || totalVideoDuration;
+        if (eVal > sVal && previewVideo.currentTime >= eVal) {
+          previewVideo.pause();
+          previewVideo.currentTime = sVal;
+        }
+      });
+    }
+
     function nudgeTime(type, delta) {
       if (type === 'start') {
         const cur = Number(rangeStart.value) || 0;

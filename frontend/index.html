@@ -522,6 +522,25 @@
       align-items: center;
       gap: 6px;
     }
+    .preview-clip-btn {
+      background: rgba(83, 252, 24, 0.15);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.15s ease;
+    }
+    .preview-clip-btn:hover {
+      background: var(--accent);
+      color: #000;
+      box-shadow: 0 0 12px rgba(83, 252, 24, 0.4);
+    }
     .clip-duration-badge {
       background: rgba(83, 252, 24, 0.15);
       color: var(--accent);
@@ -991,10 +1010,15 @@
         <div class="slider-section">
           <div class="slider-header">
             <div class="slider-title">
-              <span>🎬 Drag Slider to Set Clip Range</span>
+              <span>🎬 Slide to Set Clip Range</span>
             </div>
-            <div class="clip-duration-badge" id="selectedDurationBadge">
-              Clip: 00:01:00 (60s)
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button type="button" class="preview-clip-btn" onclick="playSelectedClip()" title="Play preview from the selected start timestamp">
+                ▶️ Play From Start
+              </button>
+              <div class="clip-duration-badge" id="selectedDurationBadge">
+                Clip: 00:01:00 (60s)
+              </div>
             </div>
           </div>
 
@@ -1373,6 +1397,15 @@
     const selectedDurationBadge = document.getElementById('selectedDurationBadge');
     const previewVideo = document.getElementById('previewVideo');
 
+    let isSeekingFromCode = false;
+
+    function playSelectedClip() {
+      if (!previewVideo) return;
+      const sVal = Number(rangeStart.value) || 0;
+      previewVideo.currentTime = sVal;
+      previewVideo.play().catch(e => console.log('Playback error:', e));
+    }
+
     function updateSliderUi() {
       const max = Number(rangeStart.max) || 3600;
       let sVal = Number(rangeStart.value);
@@ -1398,43 +1431,35 @@
 
       const clipSec = Math.max(0, eVal - sVal);
       selectedDurationBadge.textContent = `Clip: ${secToTime(clipSec)} (${clipSec}s)`;
+
+      // Immediately seek 16:9 preview video to the start timestamp!
+      if (previewVideo && !isSeekingFromCode) {
+        try {
+          previewVideo.currentTime = sVal;
+        } catch (e) {}
+      }
     }
 
-    rangeStart.addEventListener('input', () => {
-      let sVal = Number(rangeStart.value);
-      let eVal = Number(rangeEnd.value);
-      if (sVal >= eVal) {
-        rangeStart.value = eVal - 1;
-      }
-      updateSliderUi();
-      if (previewVideo && previewVideo.duration) {
-        previewVideo.currentTime = Number(rangeStart.value);
-      }
-    });
+    // When user plays the video, make sure it starts at the selected start timestamp!
+    if (previewVideo) {
+      previewVideo.addEventListener('play', () => {
+        const sVal = Number(rangeStart.value) || 0;
+        const eVal = Number(rangeEnd.value) || totalVideoDuration;
+        if (previewVideo.currentTime < sVal - 0.5 || previewVideo.currentTime >= eVal - 0.5) {
+          previewVideo.currentTime = sVal;
+        }
+      });
 
-    rangeEnd.addEventListener('input', () => {
-      let sVal = Number(rangeStart.value);
-      let eVal = Number(rangeEnd.value);
-      if (eVal <= sVal) {
-        rangeEnd.value = sVal + 1;
-      }
-      updateSliderUi();
-      if (previewVideo && previewVideo.duration) {
-        previewVideo.currentTime = Number(rangeEnd.value);
-      }
-    });
-
-    startTimeInput.addEventListener('change', () => {
-      const sec = timeToSec(startTimeInput.value);
-      rangeStart.value = sec;
-      updateSliderUi();
-    });
-
-    endTimeInput.addEventListener('change', () => {
-      const sec = timeToSec(endTimeInput.value);
-      rangeEnd.value = sec;
-      updateSliderUi();
-    });
+      // Pause when reaching the selected end timestamp!
+      previewVideo.addEventListener('timeupdate', () => {
+        const sVal = Number(rangeStart.value) || 0;
+        const eVal = Number(rangeEnd.value) || totalVideoDuration;
+        if (eVal > sVal && previewVideo.currentTime >= eVal) {
+          previewVideo.pause();
+          previewVideo.currentTime = sVal;
+        }
+      });
+    }
 
     function nudgeTime(type, delta) {
       if (type === 'start') {
