@@ -146,7 +146,8 @@ def start_clip(req: ClipRequest, bg_tasks: BackgroundTasks):
         "status": "pending",
         "progress": 5.0,
         "message": "Queued for processing...",
-        "created_at": datetime.datetime.now().isoformat()
+        "created_at": datetime.datetime.now().isoformat(),
+        "req": {"url": url, "start": start, "end": end, "quality": quality}
     }
 
     bg_tasks.add_task(run_clip_job, job_id, url, start, end, quality)
@@ -161,6 +162,14 @@ def get_job_status(job_id: str):
 @app.get("/recent_jobs")
 def get_recent_jobs():
     return list(jobs.values())[-10:]
+
+@app.get("/list_clips")
+def list_clips():
+    res = []
+    if CLIPS_DIR.exists():
+        for f in CLIPS_DIR.iterdir():
+            res.append({"name": f.name, "size": f.stat().st_size, "time": f.stat().st_mtime})
+    return res
 
 @app.post("/debug_clip")
 def debug_clip(req: ClipRequest):
