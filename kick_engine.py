@@ -12,6 +12,7 @@ Supports:
 import os
 import re
 import json
+import time
 import datetime
 import urllib.request
 import subprocess
@@ -226,9 +227,42 @@ def get_kick_vod_data(video_uuid: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def resolve_twitch_url(url: str) -> str:
+    """
+    Standardizes Twitch URLs. If given a channel URL (e.g. twitch.tv/eslcs),
+    resolves it to the channel's latest recorded VOD so timestamps & clipping work.
+    """
+    url = url.strip()
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url.lstrip("/")
+    
+    # If already a VOD or Clip, return as is
+    if "/videos/" in url or "/clip" in url or "clips.twitch.tv" in url:
+        return url
+
+    # Channel match: e.g. https://www.twitch.tv/eslcs or https://twitch.tv/shroud/
+    m = re.match(r'^https?://(?:www\.)?twitch\.tv/([a-zA-Z0-9_]+)/?$', url, re.IGNORECASE)
+    if m:
+        channel = m.group(1).lower()
+        if channel not in ["directory", "downloads", "jobs", "p", "turbo", "search"]:
+            archive_url = f"https://www.twitch.tv/{channel}/videos?filter=archives&sort=time"
+            cmd = ["yt-dlp", "--dump-json", "--playlist-items", "1", archive_url]
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=12)
+                if res.returncode == 0 and res.stdout.strip():
+                    data = json.loads(res.stdout.strip().splitlines()[0])
+                    vod_url = data.get("webpage_url")
+                    if vod_url and "/videos/" in vod_url:
+                        print(f"[Engine] Resolved Twitch channel '{channel}' to latest VOD: {vod_url}")
+                        return vod_url
+            except Exception as e:
+                print(f"[Engine] Channel VOD resolution error: {e}")
+    return url
+
+
 def get_twitch_metadata(target_url: str) -> Dict[str, Any]:
     """Extracts Twitch video, VOD, clip or livestream metadata directly using yt-dlp."""
-    target_url = target_url.strip()
+    target_url = resolve_twitch_url(target_url.strip())
     if not target_url.startswith("http://") and not target_url.startswith("https://"):
         target_url = "https://" + target_url.lstrip("/")
     
@@ -466,7 +500,9 @@ def clip_kick_video(
     # If URL is a Kick webpage, resolve it to direct m3u8 source.
     # NEVER overwrite Twitch URLs because yt-dlp native Twitch extractor handles authentication!
     target_media = url.strip()
-    if not is_twitch and not target_media.endswith(".m3u8"):
+    if is_twitch:
+        target_media = resolve_twitch_url(target_media)
+    elif not target_media.endswith(".m3u8"):
         resolved_info = get_kick_info(target_media)
         if resolved_info.get("success") and resolved_info.get("source_m3u8"):
             target_media = resolved_info["source_m3u8"]
@@ -584,16 +620,37 @@ def clip_kick_video(
 
         proc.wait(timeout=600)
 
-        # Look for the generated output file (direct or matching prefix)
+        # Retry loop to allow filesystem flush and rename (up to 5s)
         resolved_file = None
-        if final_output.exists() and final_output.stat().st_size > 1000:
-            resolved_file = final_output
-        else:
+        for _ in range(10):
+            if final_output.exists() and final_output.stat().st_size > 1000:
+                resolved_file = final_output
+                break
+            # Check any candidate file matching prefix and timestamp
             candidates = list(out_path.glob(f"{prefix}_clip_{timestamp_str}*"))
             for cand in candidates:
                 if cand.exists() and cand.stat().st_size > 1000:
                     resolved_file = cand
                     break
+            if resolved_file:
+                break
+            # Also check any recent .mp4 created in last 90 seconds with valid size
+            recent_mp4s = sorted(
+                [f for f in out_path.glob(f"{prefix}_clip_*.mp4") if f.exists() and f.stat().st_size > 1000 and (time.time() - f.stat().st_mtime) < 90],
+                key=lambda x: x.stat().st_mtime,
+                reverse=True
+            )
+            if recent_mp4s:
+                resolved_file = recent_mp4s[0]
+                break
+            time.sleep(0.5)
+
+        # Clean up empty or corrupted placeholder files (<1KB)
+        if final_output.exists() and final_output.stat().st_size < 1000:
+            try:
+                final_output.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         if proc.returncode == 0 and resolved_file:
             if progress_callback:
@@ -609,8 +666,13 @@ def clip_kick_video(
             return True, f"Successfully created clip ({size_mb} MB)!", meta
         else:
             err_hints = [l for l in recent_lines if any(k in l.lower() for k in ["error", "warning", "fail", "unable"])]
-            err_msg = " | ".join(err_hints[-2:]) if err_hints else "video segment could not be generated"
-            return False, f"Trimming failed (code {proc.returncode}): {err_msg}", {}
+            if err_hints:
+                err_msg = " | ".join(err_hints[-2:])
+            elif proc.returncode == 0:
+                err_msg = "Selected timestamp range produced no video data. Please verify start and end timestamps match the recorded stream."
+            else:
+                err_msg = f"video segment could not be generated (exit code {proc.returncode})"
+            return False, f"Trimming failed: {err_msg}", {}
 
     except subprocess.TimeoutExpired:
         if proc:
