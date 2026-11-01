@@ -516,60 +516,66 @@ def clip_kick_video(
             bufsize=1
         )
 
-        buffer = ""
-        while True:
-            chunk = proc.stdout.read(64)
-            if not chunk and proc.poll() is not None:
-                break
-            buffer += chunk
-            while '\r' in buffer or '\n' in buffer:
-                m = re.search(r'[\r\n]', buffer)
-                line_str = buffer[:m.start()].strip()
-                buffer = buffer[m.end():]
-                if not line_str:
-                    continue
+        for raw_line in iter(proc.stdout.readline, ''):
+            line_str = raw_line.strip()
+            if not line_str:
+                continue
 
-                # Stream downloading status
-                if "[info]" in line_str and "Downloading 1 time ranges" in line_str:
-                    if last_pct < 15.0:
-                        last_pct = 15.0
+            # Step 1: Range located
+            if "[info]" in line_str and "Downloading 1 time ranges" in line_str:
+                if last_pct < 15.0:
+                    last_pct = 15.0
+                    if progress_callback:
+                        progress_callback(15.0, "Locating video stream segments...")
+
+            # Step 2: Opening CDN chunks
+            elif "Opening 'https://" in line_str:
+                if last_pct < 22.0:
+                    last_pct = 22.0
+                    if progress_callback:
+                        progress_callback(22.0, "Connecting to stream chunks...")
+
+            # Step 3: Stream connected & stream copy mapping
+            elif "Stream mapping:" in line_str or "Input #0" in line_str:
+                if last_pct < 28.0:
+                    last_pct = 28.0
+                    if progress_callback:
+                        progress_callback(28.0, "Stream connected, slicing keyframes...")
+
+            # Step 4: FFmpeg time progress (e.g. time=00:00:11.93)
+            m_time = re.search(r'time=(\d+):(\d+):([\d\.]+)', line_str)
+            if m_time:
+                sec = int(m_time.group(1)) * 3600 + int(m_time.group(2)) * 60 + float(m_time.group(3))
+                if clip_duration > 0:
+                    ratio = min(1.0, max(0.0, sec / clip_duration))
+                    calc_pct = 30.0 + (ratio * 65.0)
+                    if calc_pct > last_pct:
+                        last_pct = round(calc_pct, 1)
                         if progress_callback:
-                            progress_callback(15.0, "Locating video stream segments...")
+                            progress_callback(last_pct, f"Slicing clip: {last_pct}% ({seconds_to_time(int(sec))}/{seconds_to_time(clip_duration)})")
+                continue
 
-                # FFmpeg time progress (e.g. time=00:00:11.93)
-                m_time = re.search(r'time=(\d+):(\d+):([\d\.]+)', line_str)
-                if m_time:
-                    sec = int(m_time.group(1)) * 3600 + int(m_time.group(2)) * 60 + float(m_time.group(3))
-                    if clip_duration > 0:
-                        ratio = min(1.0, max(0.0, sec / clip_duration))
-                        calc_pct = 15.0 + (ratio * 80.0)
-                        if calc_pct > last_pct:
-                            last_pct = round(calc_pct, 1)
-                            if progress_callback:
-                                progress_callback(last_pct, f"Slicing clip: {last_pct}% ({seconds_to_time(int(sec))}/{seconds_to_time(clip_duration)})")
-                    continue
-
-                # yt-dlp download percentage
-                m_dl = re.search(r'\[download\]\s+([\d\.]+)%', line_str)
-                if m_dl:
-                    try:
-                        val = float(m_dl.group(1))
-                        ratio = min(1.0, max(0.0, val / 100.0))
-                        calc_pct = 15.0 + (ratio * 80.0)
-                        if calc_pct > last_pct:
-                            last_pct = round(calc_pct, 1)
-                            if progress_callback:
-                                progress_callback(last_pct, f"Downloading stream segments: {last_pct}%")
-                    except ValueError:
-                        pass
-                    continue
-
-                # Container packaging
-                if "[FixupM3u8]" in line_str or "Fixing" in line_str or "Merging" in line_str:
-                    if last_pct < 96.0:
-                        last_pct = 96.0
+            # Step 5: yt-dlp download percentage
+            m_dl = re.search(r'\[download\]\s+([\d\.]+)%', line_str)
+            if m_dl:
+                try:
+                    val = float(m_dl.group(1))
+                    ratio = min(1.0, max(0.0, val / 100.0))
+                    calc_pct = 30.0 + (ratio * 65.0)
+                    if calc_pct > last_pct:
+                        last_pct = round(calc_pct, 1)
                         if progress_callback:
-                            progress_callback(96.0, "Packaging MP4 clip...")
+                            progress_callback(last_pct, f"Downloading stream segments: {last_pct}%")
+                except ValueError:
+                    pass
+                continue
+
+            # Step 6: Container packaging
+            if "[FixupM3u8]" in line_str or "Fixing" in line_str or "Merging" in line_str:
+                if last_pct < 96.0:
+                    last_pct = 96.0
+                    if progress_callback:
+                        progress_callback(96.0, "Packaging MP4 clip...")
 
         proc.wait(timeout=600)
 
