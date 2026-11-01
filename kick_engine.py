@@ -516,10 +516,15 @@ def clip_kick_video(
             bufsize=1
         )
 
+        recent_lines = []
         for raw_line in iter(proc.stdout.readline, ''):
             line_str = raw_line.strip()
             if not line_str:
                 continue
+
+            recent_lines.append(line_str)
+            if len(recent_lines) > 25:
+                recent_lines.pop(0)
 
             # Step 1: Range located
             if "[info]" in line_str and "Downloading 1 time ranges" in line_str:
@@ -579,20 +584,33 @@ def clip_kick_video(
 
         proc.wait(timeout=600)
 
-        if proc.returncode == 0 and final_output.exists() and final_output.stat().st_size > 1000:
+        # Look for the generated output file (direct or matching prefix)
+        resolved_file = None
+        if final_output.exists() and final_output.stat().st_size > 1000:
+            resolved_file = final_output
+        else:
+            candidates = list(out_path.glob(f"{prefix}_clip_{timestamp_str}*"))
+            for cand in candidates:
+                if cand.exists() and cand.stat().st_size > 1000:
+                    resolved_file = cand
+                    break
+
+        if proc.returncode == 0 and resolved_file:
             if progress_callback:
                 progress_callback(100.0, "100% Complete! Ready for download.")
-            size_mb = round(final_output.stat().st_size / (1024 * 1024), 2)
+            size_mb = round(resolved_file.stat().st_size / (1024 * 1024), 2)
             meta = {
-                "file_path": str(final_output),
-                "filename": out_filename,
+                "file_path": str(resolved_file),
+                "filename": resolved_file.name,
                 "size_mb": size_mb,
                 "duration": clip_duration,
                 "duration_str": seconds_to_time(clip_duration)
             }
             return True, f"Successfully created clip ({size_mb} MB)!", meta
         else:
-            return False, "Trimming failed: video segment could not be generated. Please try a shorter segment or different resolution.", {}
+            err_hints = [l for l in recent_lines if any(k in l.lower() for k in ["error", "warning", "fail", "unable"])]
+            err_msg = " | ".join(err_hints[-2:]) if err_hints else "video segment could not be generated"
+            return False, f"Trimming failed (code {proc.returncode}): {err_msg}", {}
 
     except subprocess.TimeoutExpired:
         if proc:
