@@ -226,12 +226,90 @@ def get_kick_vod_data(video_uuid: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def get_twitch_metadata(target_url: str) -> Dict[str, Any]:
+    """Extracts Twitch video, VOD, clip or livestream metadata directly using yt-dlp."""
+    target_url = target_url.strip()
+    if not target_url.startswith("http://") and not target_url.startswith("https://"):
+        target_url = "https://" + target_url.lstrip("/")
+    
+    cmd = [
+        "yt-dlp",
+        "--dump-json",
+        "--skip-download",
+        "--no-warnings",
+        "--no-playlist",
+        target_url
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout.strip().splitlines()[0])
+            title = data.get("title") or data.get("fulltitle") or "Twitch Stream"
+            uploader = data.get("uploader") or data.get("channel") or data.get("creator") or "Streamer"
+            duration = data.get("duration") or 0
+            stream_id = str(data.get("id") or data.get("display_id") or "N/A")
+            thumbnail = data.get("thumbnail") or ""
+            is_live = data.get("is_live", False)
+
+            formats = data.get("formats", [])
+            available_resolutions = []
+            seen_heights = set()
+
+            for f in formats:
+                h = f.get("height")
+                fid = f.get("format_id", "")
+                if h and h not in seen_heights:
+                    seen_heights.add(h)
+                    fps = f.get("fps") or 30
+                    fps_label = "60" if fps > 45 else ""
+                    badge = "Full HD" if h >= 1080 else ("HD" if h >= 720 else ("SD" if h >= 480 else ""))
+                    badge_str = f" {badge}" if badge else ""
+                    res_label = f"⚡ {h}p{fps_label}{badge_str}".strip()
+                    available_resolutions.append({
+                        "id": f"{h}p{fps_label}".strip(),
+                        "height": h,
+                        "label": res_label,
+                        "format_id": fid
+                    })
+
+            available_resolutions = sorted(available_resolutions, key=lambda x: x["height"], reverse=True)
+            if not available_resolutions:
+                available_resolutions = get_default_resolutions()
+
+            return {
+                "success": True,
+                "title": title,
+                "uploader": uploader,
+                "stream_id": stream_id,
+                "duration": int(duration),
+                "duration_str": seconds_to_time(int(duration)) if duration else "🔴 Live Stream",
+                "thumbnail": thumbnail,
+                "is_live": is_live,
+                "preview_url": data.get("manifest_url") or data.get("url") or "",
+                "available_resolutions": available_resolutions,
+                "slug": data.get("channel") or uploader,
+                "webpage_url": data.get("webpage_url", target_url),
+                "source_m3u8": ""  # keep empty so clip_kick_video uses target_url directly!
+            }
+    except Exception as e:
+        print(f"[Engine] Twitch metadata fetch error: {e}")
+
+    return {
+        "success": False,
+        "error": "Could not fetch Twitch stream information. Please verify the URL."
+    }
+
+
 def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
     """
     Extracts complete info (Title, Uploader, Duration, Stream ID, Thumbnail,
-    Available Resolutions, and Stream Preview URL) for Kick VODs, Channels, and Streams.
+    Available Resolutions, and Stream Preview URL) for Kick and Twitch VODs, Channels, and Streams.
     """
     target = url_or_channel.strip()
+
+    # Route Twitch URLs directly to Twitch metadata extractor (instant, no Kick timeouts!)
+    if "twitch.tv" in target.lower() or "twitch" in target.lower():
+        return get_twitch_metadata(target)
 
     # 1. Check if the input is a direct Kick VOD URL (kick.com/video/UUID or /videos/UUID)
     video_uuid = extract_video_uuid(target)
@@ -363,8 +441,8 @@ def clip_kick_video(
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
-    Clips a Kick VOD or stream segment between start_time and end_time.
-    Uses direct master.m3u8 if available or URL via yt-dlp --download-sections.
+    Clips a Kick or Twitch VOD or stream segment between start_time and end_time.
+    Uses native stream-copy keyframe slicing via yt-dlp.
     """
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -379,13 +457,16 @@ def clip_kick_video(
     if clip_duration > 7200:  # 2 hours limit
         return False, "Clip duration cannot exceed 2 hours at a time.", {}
 
+    is_twitch = "twitch.tv" in url.lower() or "twitch" in url.lower()
+    prefix = "twitch" if is_twitch else "kick"
     timestamp_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_filename = f"kick_clip_{timestamp_str}.mp4"
+    out_filename = f"{prefix}_clip_{timestamp_str}.mp4"
     final_output = out_path / out_filename
 
-    # If URL is a Kick webpage, resolve it to direct m3u8 source for 100% reliable cutting
+    # If URL is a Kick webpage, resolve it to direct m3u8 source.
+    # NEVER overwrite Twitch URLs because yt-dlp native Twitch extractor handles authentication!
     target_media = url.strip()
-    if not target_media.endswith(".m3u8"):
+    if not is_twitch and not target_media.endswith(".m3u8"):
         resolved_info = get_kick_info(target_media)
         if resolved_info.get("success") and resolved_info.get("source_m3u8"):
             target_media = resolved_info["source_m3u8"]
@@ -409,11 +490,11 @@ def clip_kick_video(
 
     section_arg = f"*{seconds_to_time(start_sec)}-{seconds_to_time(end_sec)}"
 
+    # Note: We omit --force-keyframes-at-cuts to allow blazing fast stream-copy without 100% CPU re-encoding!
     cmd = [
         "yt-dlp",
         "--download-sections", section_arg,
         "-f", format_selector,
-        "--force-keyframes-at-cuts",
         "-o", str(final_output),
         "--no-playlist",
         "--merge-output-format", "mp4",
@@ -422,9 +503,9 @@ def clip_kick_video(
     ]
 
     if progress_callback:
-        progress_callback(5.0, "Connecting to stream server...")
+        progress_callback(8.0, "Connecting to stream server...")
 
-    last_pct = 5.0
+    last_pct = 8.0
 
     try:
         proc = subprocess.Popen(
@@ -435,45 +516,62 @@ def clip_kick_video(
             bufsize=1
         )
 
-        for line in proc.stdout:
-            line_str = line.strip()
-            if not line_str:
-                continue
+        buffer = ""
+        while True:
+            chunk = proc.stdout.read(64)
+            if not chunk and proc.poll() is not None:
+                break
+            buffer += chunk
+            while '\r' in buffer or '\n' in buffer:
+                m = re.search(r'[\r\n]', buffer)
+                line_str = buffer[:m.start()].strip()
+                buffer = buffer[m.end():]
+                if not line_str:
+                    continue
 
-            # Check for ffmpeg transcoding time (e.g. time=00:00:11.93)
-            m_time = re.search(r'time=(\d+):(\d+):([\d\.]+)', line_str)
-            if m_time:
-                sec = int(m_time.group(1)) * 3600 + int(m_time.group(2)) * 60 + float(m_time.group(3))
-                if clip_duration > 0:
-                    calc_pct = min(98.0, (sec / clip_duration) * 100.0)
-                    if calc_pct > last_pct:
-                        last_pct = round(calc_pct, 1)
+                # Stream downloading status
+                if "[info]" in line_str and "Downloading 1 time ranges" in line_str:
+                    if last_pct < 15.0:
+                        last_pct = 15.0
                         if progress_callback:
-                            progress_callback(last_pct, f"Slicing clip: {last_pct}%")
-                continue
+                            progress_callback(15.0, "Locating video stream segments...")
 
-            # Check for yt-dlp download percentage (e.g. [download]  45.0% of ...)
-            m_dl = re.search(r'\[download\]\s+([\d\.]+)%', line_str)
-            if m_dl:
-                try:
-                    val = float(m_dl.group(1))
-                    calc_pct = min(98.0, val)
-                    if calc_pct > last_pct:
-                        last_pct = round(calc_pct, 1)
+                # FFmpeg time progress (e.g. time=00:00:11.93)
+                m_time = re.search(r'time=(\d+):(\d+):([\d\.]+)', line_str)
+                if m_time:
+                    sec = int(m_time.group(1)) * 3600 + int(m_time.group(2)) * 60 + float(m_time.group(3))
+                    if clip_duration > 0:
+                        ratio = min(1.0, max(0.0, sec / clip_duration))
+                        calc_pct = 15.0 + (ratio * 80.0)
+                        if calc_pct > last_pct:
+                            last_pct = round(calc_pct, 1)
+                            if progress_callback:
+                                progress_callback(last_pct, f"Slicing clip: {last_pct}% ({seconds_to_time(int(sec))}/{seconds_to_time(clip_duration)})")
+                    continue
+
+                # yt-dlp download percentage
+                m_dl = re.search(r'\[download\]\s+([\d\.]+)%', line_str)
+                if m_dl:
+                    try:
+                        val = float(m_dl.group(1))
+                        ratio = min(1.0, max(0.0, val / 100.0))
+                        calc_pct = 15.0 + (ratio * 80.0)
+                        if calc_pct > last_pct:
+                            last_pct = round(calc_pct, 1)
+                            if progress_callback:
+                                progress_callback(last_pct, f"Downloading stream segments: {last_pct}%")
+                    except ValueError:
+                        pass
+                    continue
+
+                # Container packaging
+                if "[FixupM3u8]" in line_str or "Fixing" in line_str or "Merging" in line_str:
+                    if last_pct < 96.0:
+                        last_pct = 96.0
                         if progress_callback:
-                            progress_callback(last_pct, f"Downloading stream segments: {last_pct}%")
-                except ValueError:
-                    pass
-                continue
+                            progress_callback(96.0, "Packaging MP4 clip...")
 
-            # Check for container fixup / final packaging
-            if "[FixupM3u8]" in line_str or "Fixing" in line_str or "Merging" in line_str:
-                if last_pct < 96.0:
-                    last_pct = 96.0
-                    if progress_callback:
-                        progress_callback(96.0, "Packaging MP4 clip...")
-
-        proc.wait(timeout=300)
+        proc.wait(timeout=600)
 
         if proc.returncode == 0 and final_output.exists() and final_output.stat().st_size > 1000:
             if progress_callback:
@@ -488,11 +586,11 @@ def clip_kick_video(
             }
             return True, f"Successfully created clip ({size_mb} MB)!", meta
         else:
-            return False, "Trimming failed: video segment could not be generated. Please try a different time range or resolution.", {}
+            return False, "Trimming failed: video segment could not be generated. Please try a shorter segment or different resolution.", {}
 
     except subprocess.TimeoutExpired:
         if proc:
             proc.kill()
-        return False, "Process timed out. Please select a shorter segment.", {}
+        return False, "Process timed out. For longer clips, please try a segment under 15 minutes.", {}
     except Exception as e:
         return False, f"Unexpected error: {str(e)}", {}

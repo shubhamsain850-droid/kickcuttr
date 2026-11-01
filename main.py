@@ -117,9 +117,11 @@ def run_clip_job(job_id: str, url: str, start: str, end: str, quality: str):
         else:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = msg
+            jobs[job_id]["message"] = msg
     except Exception as e:
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["error"] = str(e)
+        jobs[job_id]["message"] = str(e)
 
 @app.post("/clip")
 def start_clip(req: ClipRequest, bg_tasks: BackgroundTasks):
