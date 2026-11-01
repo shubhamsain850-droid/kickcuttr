@@ -162,6 +162,33 @@ def get_job_status(job_id: str):
 def get_recent_jobs():
     return list(jobs.values())[-10:]
 
+@app.post("/debug_clip")
+def debug_clip(req: ClipRequest):
+    import subprocess
+    out_file = f"/tmp/kickcuttr/debug_{uuid.uuid4().hex[:6]}.mp4"
+    cmd = [
+        "yt-dlp",
+        "--download-sections", f"*{req.start}-{req.end}",
+        "-f", "best[height<=480]/best",
+        "-o", out_file,
+        "--no-playlist",
+        "--merge-output-format", "mp4",
+        "--newline",
+        req.url
+    ]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return {
+            "returncode": p.returncode,
+            "stdout_tail": p.stdout.splitlines()[-15:] if p.stdout else [],
+            "stderr_tail": p.stderr.splitlines()[-15:] if p.stderr else [],
+            "out_exists": os.path.exists(out_file),
+            "out_size": os.path.getsize(out_file) if os.path.exists(out_file) else 0,
+            "tmp_files": os.listdir("/tmp/kickcuttr") if os.path.exists("/tmp/kickcuttr") else []
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/download/{filename}")
 def download_clip(filename: str):
     safe_name = os.path.basename(filename)
