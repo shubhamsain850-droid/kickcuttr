@@ -52,11 +52,11 @@ class ClipRequest(BaseModel):
     end: str
     quality: str = "720p"
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"status": "ok", "service": "KickCutter API", "version": "1.1.0"}
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
 
