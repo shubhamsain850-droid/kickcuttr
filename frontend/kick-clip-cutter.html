@@ -65,7 +65,7 @@
         "name": "How do I cut a clip from a Kick VOD online?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Paste any Kick VOD or stream URL into KickCutter and click Fetch Video. Use the dual range slider or type exact start and end timestamps to select your clip range. Click Cut Clip Now — only that section processes and downloads as an MP4. You do not need to download the full Kick VOD."
+          "text": "Paste any Kick VOD or stream URL into KickCutter and click Fetch Stream. Use the dual range slider or type exact start and end timestamps to select your clip range. Click Cut Clip Now — only that section processes and downloads as an MP4. You do not need to download the full Kick VOD."
         }
       },
       {
@@ -607,7 +607,7 @@
       <div class="input-row">
         <input type="text" id="urlInput" placeholder="Paste Kick URL (e.g. https://kick.com/xqc or https://kick.com/video/UUID)" autofocus>
         <button class="btn" id="fetchBtn" onclick="handleFetch()">
-          <span id="fetchBtnText">🔍 Fetch Video</span>
+          <span id="fetchBtnText">🔍 Fetch Stream</span>
         </button>
       </div>
 
@@ -762,7 +762,7 @@
       <h2 style="font-size: 1.6rem; color: #fff; margin-bottom: 1.25rem; text-align: center;">Kick VOD Cutter — Frequently Asked Questions</h2>
       <div class="faq-item">
         <div class="faq-question" onclick="toggleFaq(this)">How do I cut a clip from a Kick VOD by timestamp? <span>+</span></div>
-        <div class="faq-answer">Paste any Kick VOD URL into KickCutter and click Fetch Video. Type your start and end timestamps (e.g. 01:23:00 and 01:26:30) or drag the dual range slider to your desired range. Click Cut Clip Now — only that section processes and downloads as MP4.</div>
+        <div class="faq-answer">Paste any Kick VOD URL into KickCutter and click Fetch Stream. Type your start and end timestamps (e.g. 01:23:00 and 01:26:30) or drag the dual range slider to your desired range. Click Cut Clip Now — only that section processes and downloads as MP4.</div>
       </div>
       <div class="faq-item">
         <div class="faq-question" onclick="toggleFaq(this)">Can I cut a Kick VOD without downloading the full video? <span>+</span></div>
@@ -1083,7 +1083,7 @@
       } catch (err) {
         alert('Could not connect to backend server.');
       } finally {
-        fetchBtn.disabled = false; fetchBtnText.innerHTML = '🔍 Fetch Video';
+        fetchBtn.disabled = false; fetchBtnText.innerHTML = '🔍 Fetch Stream';
       }
     }
 

@@ -65,7 +65,7 @@
         "name": "How do I download a Kick VOD to MP4?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Copy the URL of any public Kick VOD or stream, paste it into KickCutter, click 'Fetch Video', choose your resolution (1080p, 720p, or Best Available), and click 'Download Now'. The MP4 file will be downloaded directly to your device."
+          "text": "Copy the URL of any public Kick VOD or stream, paste it into KickCutter, click 'Fetch Stream', choose your resolution (1080p, 720p, or Best Available), and click 'Download Now'. The MP4 file will be downloaded directly to your device."
         }
       },
       {
@@ -549,7 +549,7 @@
       <div class="input-row">
         <input type="text" id="urlInput" placeholder="Paste Kick URL (e.g. https://kick.com/video/UUID or https://kick.com/channel)" autofocus>
         <button class="btn" id="fetchBtn" onclick="handleFetch()">
-          <span id="fetchBtnText">🔍 Fetch Video</span>
+          <span id="fetchBtnText">🔍 Fetch Stream</span>
         </button>
       </div>
 
@@ -701,7 +701,7 @@
       <h2 style="font-size: 1.6rem; color: #fff; margin-bottom: 1.25rem; text-align: center;">Kick VOD Downloader FAQs</h2>
       <div class="faq-item">
         <div class="faq-question" onclick="toggleFaq(this)">How do I download a Kick stream to MP4? <span>+</span></div>
-        <div class="faq-answer">Copy the URL of any public Kick stream or VOD, paste it into the box above, click 'Fetch Video', choose your resolution, and click 'Download VOD to MP4'.</div>
+        <div class="faq-answer">Copy the URL of any public Kick stream or VOD, paste it into the box above, click 'Fetch Stream', choose your resolution, and click 'Download VOD to MP4'.</div>
       </div>
       <div class="faq-item">
         <div class="faq-question" onclick="toggleFaq(this)">Can I download a full 2-hour Kick stream segment? <span>+</span></div>
@@ -1011,7 +1011,7 @@
       } catch (err) {
         alert('Could not connect to backend server.');
       } finally {
-        fetchBtn.disabled = false; fetchBtnText.innerHTML = '🔍 Fetch Video';
+        fetchBtn.disabled = false; fetchBtnText.innerHTML = '🔍 Fetch Stream';
       }
     }
 

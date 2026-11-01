@@ -84,7 +84,7 @@
         "name": "How do I download part of a Kick stream?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "You can download any part of a Kick stream using KickCutter in 3 steps: 1. Paste the Kick VOD or stream URL and click Fetch Info. 2. Set your start and end timestamps using the range slider or type them directly. 3. Click Cut Clip Now. Only that selected section downloads as an MP4 — you do not need to download the full stream."
+          "text": "You can download any part of a Kick stream using KickCutter in 3 steps: 1. Paste the Kick VOD or stream URL and click Fetch Stream. 2. Set your start and end timestamps using the range slider or type them directly. 3. Click Cut Clip Now. Only that selected section downloads as an MP4 — you do not need to download the full stream."
         }
       },
       {
@@ -100,7 +100,7 @@
         "name": "How do I cut a clip from a Kick VOD by timestamp?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "Paste any Kick VOD URL into KickCutter, click Fetch Info, then either drag the dual range slider to your desired timestamps or type the start and end times directly (e.g. 01:23:45 to 01:26:10). Click Cut Clip Now to download only that segment as an MP4."
+          "text": "Paste any Kick VOD URL into KickCutter, click Fetch Stream, then either drag the dual range slider to your desired timestamps or type the start and end times directly (e.g. 01:23:45 to 01:26:10). Click Cut Clip Now to download only that segment as an MP4."
         }
       },
       {
@@ -108,7 +108,7 @@
         "name": "How do I download a Kick VOD?",
         "acceptedAnswer": {
           "@type": "Answer",
-          "text": "To download a Kick VOD: paste the Kick video URL into KickCutter and click Fetch Info. Set start time to 00:00:00 and end time to the full duration of the VOD, select your preferred resolution (up to 1080p), then click Cut Clip Now. The entire VOD downloads as an MP4 file."
+          "text": "To download a Kick VOD: paste the Kick video URL into KickCutter and click Fetch Stream. Set start time to 00:00:00 and end time to the full duration of the VOD, select your preferred resolution (up to 1080p), then click Cut Clip Now. The entire VOD downloads as an MP4 file."
         }
       },
       {
@@ -1039,11 +1039,11 @@
       <div class="input-row">
         <input type="text" id="urlInput" placeholder="Paste Kick URL (e.g. https://kick.com/xqc or https://kick.com/video/UUID)" autofocus>
         <button class="btn" id="fetchBtn" onclick="handleFetch()">
-          <span id="fetchBtnText">🔍 Fetch Info</span>
+          <span id="fetchBtnText">🔍 Fetch Stream</span>
         </button>
       </div>
 
-      <!-- Video Preview & Title Card (Shown Immediately on Fetch Info) -->
+      <!-- Video Preview & Title Card (Shown Immediately on Fetch Stream) -->
       <div class="preview-card" id="previewCard">
         <div class="preview-header">
           <div class="preview-title-row">
@@ -1197,7 +1197,7 @@
         <div class="step-card">
           <div class="step-num">1</div>
           <h3>Paste Kick VOD URL</h3>
-          <p>Copy the link of any Kick stream or VOD and click <strong>Fetch Info</strong>. The video title, duration, and live preview load instantly — no account needed.</p>
+          <p>Copy the link of any Kick stream or VOD and click <strong>Fetch Stream</strong>. The video title, duration, and live preview load instantly — no account needed.</p>
         </div>
         <div class="step-card">
           <div class="step-num">2</div>
@@ -1269,7 +1269,7 @@
         <div id="tab-cutter" class="faq-pane active">
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">How do I download part of a Kick stream? <span>+</span></div>
-            <div class="faq-answer">You can download any part of a Kick stream with KickCutter in 3 steps: (1) Paste the Kick VOD or stream URL and click Fetch Info. (2) Set your start and end timestamps using the slider or type them directly (e.g. 01:23:00 to 01:26:30). (3) Click Cut Clip Now. Only that selected section downloads as MP4 — you never download the full stream.</div>
+            <div class="faq-answer">You can download any part of a Kick stream with KickCutter in 3 steps: (1) Paste the Kick VOD or stream URL and click Fetch Stream. (2) Set your start and end timestamps using the slider or type them directly (e.g. 01:23:00 to 01:26:30). (3) Click Cut Clip Now. Only that selected section downloads as MP4 — you never download the full stream.</div>
           </div>
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">Can I cut a Kick VOD without downloading the full video? <span>+</span></div>
@@ -1277,7 +1277,7 @@
           </div>
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">How do I cut a clip from a Kick VOD by timestamp? <span>+</span></div>
-            <div class="faq-answer">Paste any Kick VOD URL into KickCutter and click Fetch Info. Then type exact start and end timestamps (e.g. 00:45:10 and 00:47:30) or drag the dual range slider to your desired range. Click Cut Clip Now — only that segment downloads as an MP4.</div>
+            <div class="faq-answer">Paste any Kick VOD URL into KickCutter and click Fetch Stream. Then type exact start and end timestamps (e.g. 00:45:10 and 00:47:30) or drag the dual range slider to your desired range. Click Cut Clip Now — only that segment downloads as an MP4.</div>
           </div>
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">How do I trim a Kick VOD online? <span>+</span></div>
@@ -1313,7 +1313,7 @@
           </div>
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">How do I download a Kick VOD? <span>+</span></div>
-            <div class="faq-answer">To download a Kick VOD: paste the Kick video URL into KickCutter and click Fetch Info. Set start time to 00:00:00 and end time to the full VOD duration, then select your preferred resolution (up to 1080p) and click Cut Clip Now. The full VOD downloads as an MP4 to your device.</div>
+            <div class="faq-answer">To download a Kick VOD: paste the Kick video URL into KickCutter and click Fetch Stream. Set start time to 00:00:00 and end time to the full VOD duration, then select your preferred resolution (up to 1080p) and click Cut Clip Now. The full VOD downloads as an MP4 to your device.</div>
           </div>
           <div class="faq-item">
             <div class="faq-question" onclick="toggleFaq(this)">Can I download Kick videos in MP4 format? <span>+</span></div>
@@ -1775,7 +1775,7 @@
         alert('Could not connect to backend server. Please verify your connection.');
       } finally {
         fetchBtn.disabled = false;
-        fetchBtnText.innerHTML = '🔍 Fetch Info';
+        fetchBtnText.innerHTML = '🔍 Fetch Stream';
       }
     }
 
