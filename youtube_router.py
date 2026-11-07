@@ -124,7 +124,7 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
                 "success": False,
                 "error": "TIMEOUT",
                 "title": stream_title,
-                "message": f"Downloading chat for '{stream_title}' took longer than 3 minutes. Please use Option D (upload JSON directly) for instant audit.",
+                "message": f"Downloading chat for '{stream_title}' took longer than 3 minutes. Please check your connection or try again.",
                 "video_id": vid
             }
 
