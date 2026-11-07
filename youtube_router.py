@@ -47,6 +47,17 @@ def yt_analytics_health():
         "version": "1.2.0"
     }
 
+@router.get("/debug-ytdlp")
+def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
+    cmd = ["yt-dlp"] + get_cookie_arg() + ["--skip-download", "--print", "%(title)s", f"https://www.youtube.com/watch?v={vid}"]
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    return {
+        "cookie_arg": get_cookie_arg(),
+        "returncode": res.returncode,
+        "stdout": res.stdout,
+        "stderr": res.stderr
+    }
+
 @router.post("/channel-streams")
 def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
     """
