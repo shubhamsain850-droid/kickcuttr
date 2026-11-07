@@ -53,20 +53,20 @@ def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
         chat_template = os.path.join(tmp_dir, f"{vid}.%(ext)s")
         cmd = [
             "yt-dlp",
-            "--extractor-args", "youtube:player_client=android,web",
+            "--extractor-args", "youtube:player_client=android",
             "--skip-download",
             "--write-sub",
             "--sub-langs", "live_chat",
             "-o", chat_template,
             f"https://www.youtube.com/watch?v={vid}"
-        ] + get_cookie_arg()
+        ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         found = [str(f.name) for f in Path(tmp_dir).glob("*")]
         return {
             "returncode": res.returncode,
             "found_files": found,
-            "stdout": res.stdout[-300:] if res.stdout else "",
-            "stderr": res.stderr[-300:] if res.stderr else ""
+            "stdout": res.stdout[-400:] if res.stdout else "",
+            "stderr": res.stderr[-400:] if res.stderr else ""
         }
 
 @router.post("/channel-streams")
