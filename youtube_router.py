@@ -54,6 +54,7 @@ def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
         cmd = [
             "yt-dlp",
             "--extractor-args", "youtube:player_client=android",
+            "--ignore-no-formats-error",
             "--skip-download",
             "--write-sub",
             "--sub-langs", "live_chat",
