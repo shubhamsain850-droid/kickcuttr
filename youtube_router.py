@@ -49,20 +49,25 @@ def yt_analytics_health():
 
 @router.get("/debug-ytdlp")
 def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
-    cmd = [
-        "yt-dlp",
-        "--extractor-args", "youtube:player_client=android,web",
-        "--skip-download",
-        "--print", "%(title)s",
-        f"https://www.youtube.com/watch?v={vid}"
-    ] + get_cookie_arg()
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
-    return {
-        "cookie_arg": get_cookie_arg(),
-        "returncode": res.returncode,
-        "stdout": res.stdout,
-        "stderr": res.stderr
-    }
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        chat_template = os.path.join(tmp_dir, f"{vid}.%(ext)s")
+        cmd = [
+            "yt-dlp",
+            "--extractor-args", "youtube:player_client=android,web",
+            "--skip-download",
+            "--write-sub",
+            "--sub-langs", "live_chat",
+            "-o", chat_template,
+            f"https://www.youtube.com/watch?v={vid}"
+        ] + get_cookie_arg()
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        found = [str(f.name) for f in Path(tmp_dir).glob("*")]
+        return {
+            "returncode": res.returncode,
+            "found_files": found,
+            "stdout": res.stdout[-300:] if res.stdout else "",
+            "stderr": res.stderr[-300:] if res.stderr else ""
+        }
 
 @router.post("/channel-streams")
 def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
