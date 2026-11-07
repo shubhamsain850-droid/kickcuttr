@@ -3,7 +3,7 @@ FastAPI APIRouter for YouTube Live Stream Earning & Chat Analytics
 Can be plugged into ANY existing FastAPI app (e.g. kickcuttr main.py) with zero friction!
 """
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Depends, Response
 from pydantic import BaseModel
 from typing import Optional, List
 import subprocess
@@ -20,7 +20,12 @@ from youtube_engine import (
     get_cookie_arg
 )
 
-router = APIRouter()
+def anti_cache_headers(response: Response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+router = APIRouter(dependencies=[Depends(anti_cache_headers)])
 
 # ─────────────────────────────────────────────
 # REQUEST MODELS
