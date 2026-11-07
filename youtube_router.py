@@ -91,15 +91,35 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
         cmd = [
             "yt-dlp",
             "--skip-download",
-            "--write-sub",
+            "--write-subs",
             "--sub-langs", "live_chat",
-            "--sub-format", "json",
             "-o", chat_output_template,
             f"https://www.youtube.com/watch?v={vid}"
         ]
 
+        # Fetch video metadata (Title & Date)
+        meta_cmd = [
+            "yt-dlp",
+            "--skip-download",
+            "--print", "%(title)s\t%(upload_date)s",
+            f"https://www.youtube.com/watch?v={vid}"
+        ]
+        
+        video_title = f"Stream [{vid}]"
+        upload_date = ""
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+            m_res = subprocess.run(meta_cmd, capture_output=True, text=True, timeout=15)
+            if m_res.returncode == 0 and m_res.stdout.strip():
+                parts = m_res.stdout.strip().split("\t")
+                video_title = parts[0].strip()
+                if len(parts) > 1 and len(parts[1].strip()) == 8:
+                    d = parts[1].strip()
+                    upload_date = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+        except Exception:
+            pass
+
+        try:
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         except subprocess.TimeoutExpired:
             raise HTTPException(status_code=504, detail="Timeout while downloading live chat from YouTube.")
 
@@ -111,7 +131,8 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
                 "success": False,
                 "error": "NO_CHAT_AVAILABLE",
                 "message": "Live chat replay is either disabled, private, or unavailable for this stream.",
-                "video_id": vid
+                "video_id": vid,
+                "title": video_title
             }
 
         chat_file = found_files[0]
@@ -119,9 +140,12 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
             lines = f.readlines()
 
         parsed_data = parse_chat_json_lines(lines, video_id=vid)
+        parsed_data["title"] = video_title
+        parsed_data["upload_date"] = upload_date
         return {
             "success": True,
             "video_id": vid,
+            "title": video_title,
             "data": parsed_data
         }
 
@@ -141,3 +165,4 @@ async def analyze_uploaded_json_endpoint(file: UploadFile = File(...)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse uploaded JSON file: {str(e)}")
+

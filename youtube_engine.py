@@ -22,10 +22,16 @@ from pathlib import Path
 from typing import Optional
 
 # ─────────────────────────────────────────────
-# CONSTANTS & MAPS (From memberv4.py & research)
+# CONSTANTS & MAPS
 # ─────────────────────────────────────────────
 
-INR_PER_JEWEL: float = 1.20  # Based on standard Rs.4799 / 4000 jewels pack
+# YouTube Jewels Economics:
+# - Viewer pays: ~Rs. 1.20 per jewel (in app bundles including Google Play 30% cut)
+# - Creator receives: 1 Ruby for every 2 Jewels. 1 Ruby = $0.01 USD (~Rs. 0.84 INR).
+# - Net Creator Revenue per Jewel: ~Rs. 0.42 INR (not 1.20!).
+INR_PER_JEWEL_CREATOR: float = 0.42
+INR_PER_JEWEL_VIEWER: float = 1.20
+INR_PER_JEWEL: float = INR_PER_JEWEL_CREATOR
 
 JEWEL_MAP: dict[str, int] = {
     # 2 Jewels
@@ -416,3 +422,4 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
     except Exception as e:
         print(f"Error fetching channel streams: {e}")
         return []
+
