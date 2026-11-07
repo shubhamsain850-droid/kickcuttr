@@ -10,12 +10,14 @@ import subprocess
 import tempfile
 import json
 import os
+import re
 from pathlib import Path
 
 from youtube_engine import (
     extract_video_id,
     parse_chat_json_lines,
-    get_channel_streams
+    get_channel_streams,
+    get_cookie_arg
 )
 
 router = APIRouter()
@@ -42,7 +44,7 @@ def yt_analytics_health():
     return {
         "status": "healthy",
         "service": "YouTube Stream Analytics Engine",
-        "version": "1.0.0"
+        "version": "1.2.0"
     }
 
 @router.post("/channel-streams")
@@ -70,9 +72,9 @@ def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
 def analyze_stream_endpoint(req: AnalyzeStreamRequest):
     """
     Downloads live chat replay for the given YouTube video ID/URL and extracts:
-    - Superchats
-    - Memberships
-    - Jewels
+    - Superchats & Super Stickers
+    - Memberships (Dynamic Custom Tiers & Milestones)
+    - YouTube Jewels
     - Total Gross & Net Earnings
     """
     url = req.url.strip()
@@ -83,56 +85,51 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
     if not vid:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL or Video ID.")
 
-    # Create isolated temp folder for downloading chat json
+    # 1. Fetch real video title with cookies
+    stream_title = f"Live Stream [{vid}]"
+    title_cmd = ["yt-dlp"] + get_cookie_arg() + [
+        "--skip-download",
+        "--print", "%(title)s",
+        f"https://www.youtube.com/watch?v={vid}"
+    ]
+    try:
+        t_res = subprocess.run(title_cmd, capture_output=True, text=True, timeout=15)
+        if t_res.returncode == 0 and t_res.stdout.strip():
+            stream_title = t_res.stdout.strip()
+    except Exception:
+        pass
+
+    # 2. Download live chat replay json in isolated temp dir
     with tempfile.TemporaryDirectory() as tmp_dir:
         chat_output_template = os.path.join(tmp_dir, f"{vid}.%(ext)s")
-        
-        # yt-dlp command to fetch only live_chat subtitle/json without downloading video
-        cmd = [
-            "yt-dlp",
+        cmd = ["yt-dlp"] + get_cookie_arg() + [
             "--skip-download",
-            "--write-subs",
+            "--write-sub",
             "--sub-langs", "live_chat",
             "-o", chat_output_template,
             f"https://www.youtube.com/watch?v={vid}"
         ]
 
-        # Fetch video metadata (Title & Date)
-        meta_cmd = [
-            "yt-dlp",
-            "--skip-download",
-            "--print", "%(title)s\t%(upload_date)s",
-            f"https://www.youtube.com/watch?v={vid}"
-        ]
-        
-        video_title = f"Stream [{vid}]"
-        upload_date = ""
         try:
-            m_res = subprocess.run(meta_cmd, capture_output=True, text=True, timeout=15)
-            if m_res.returncode == 0 and m_res.stdout.strip():
-                parts = m_res.stdout.strip().split("\t")
-                video_title = parts[0].strip()
-                if len(parts) > 1 and len(parts[1].strip()) == 8:
-                    d = parts[1].strip()
-                    upload_date = f"{d[:4]}-{d[4:6]}-{d[6:]}"
-        except Exception:
-            pass
-
-        try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=504, detail="Timeout while downloading live chat from YouTube.")
+            return {
+                "success": False,
+                "error": "TIMEOUT",
+                "title": stream_title,
+                "message": f"Downloading chat for '{stream_title}' took longer than 3 minutes. Please use Option D (upload JSON directly) for instant audit.",
+                "video_id": vid
+            }
 
-        # Locate downloaded chat file (.json or .live_chat.json)
         found_files = list(Path(tmp_dir).glob(f"*{vid}*.json"))
         
         if not found_files:
             return {
                 "success": False,
                 "error": "NO_CHAT_AVAILABLE",
-                "message": "Live chat replay is either disabled, private, or unavailable for this stream.",
-                "video_id": vid,
-                "title": video_title
+                "title": stream_title,
+                "message": f"Live chat replay was not found or is disabled for '{stream_title}'.",
+                "video_id": vid
             }
 
         chat_file = found_files[0]
@@ -140,12 +137,10 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
             lines = f.readlines()
 
         parsed_data = parse_chat_json_lines(lines, video_id=vid)
-        parsed_data["title"] = video_title
-        parsed_data["upload_date"] = upload_date
         return {
             "success": True,
             "video_id": vid,
-            "title": video_title,
+            "title": stream_title,
             "data": parsed_data
         }
 
@@ -157,12 +152,13 @@ async def analyze_uploaded_json_endpoint(file: UploadFile = File(...)):
     try:
         content = await file.read()
         lines = content.decode("utf-8", errors="ignore").splitlines()
-        parsed_data = parse_chat_json_lines(lines, video_id=file.filename)
+        clean_name = file.filename.replace(".live_chat.json", "").replace(".json", "")
+        parsed_data = parse_chat_json_lines(lines, video_id=clean_name)
         return {
             "success": True,
+            "title": clean_name,
             "filename": file.filename,
             "data": parsed_data
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse uploaded JSON file: {str(e)}")
-
