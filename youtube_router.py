@@ -57,13 +57,14 @@ def debug_3u(vid: str = "3uG6S9V6yz8"):
     with tempfile.TemporaryDirectory() as tmp_dir:
         chat_template = os.path.join(tmp_dir, f"{vid}.%(ext)s")
         cmd = ["yt-dlp"] + get_cookie_arg() + [
+            "--ignore-no-formats-error",
             "--skip-download",
             "--write-sub",
             "--sub-langs", "live_chat",
             "-o", chat_template,
             f"https://www.youtube.com/watch?v={vid}"
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
         found = [str(f.name) for f in Path(tmp_dir).glob("*")]
         return {
             "cmd": cmd,
