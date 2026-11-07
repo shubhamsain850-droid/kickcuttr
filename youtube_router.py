@@ -51,8 +51,7 @@ def yt_analytics_health():
 def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
     cmd = [
         "yt-dlp",
-        "--remote-components", "ejs:github",
-        "--ignore-no-formats-error",
+        "--extractor-args", "youtube:player_client=android,web",
         "--skip-download",
         "--print", "%(title)s",
         f"https://www.youtube.com/watch?v={vid}"
