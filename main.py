@@ -8,7 +8,7 @@ Provides endpoints for:
 - GET /health: API health check.
 """
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -27,6 +27,15 @@ from kick_engine import (
 )
 
 app = FastAPI(title="KickCutter API", description="Backend API for Kick.com Video Trimming")
+
+# Anti-Cache Security Middleware (Ensures ZERO cross-user cache collisions)
+@app.middleware("http")
+async def add_anti_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # Enable CORS for Cloudflare Pages frontend
 app.add_middleware(
