@@ -49,8 +49,15 @@ def yt_analytics_health():
 
 @router.get("/debug-ytdlp")
 def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
-    cmd = ["yt-dlp"] + get_cookie_arg() + ["--skip-download", "--print", "%(title)s", f"https://www.youtube.com/watch?v={vid}"]
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+    cmd = [
+        "yt-dlp",
+        "--remote-components", "ejs:github",
+        "--ignore-no-formats-error",
+        "--skip-download",
+        "--print", "%(title)s",
+        f"https://www.youtube.com/watch?v={vid}"
+    ] + get_cookie_arg()
+    res = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
     return {
         "cookie_arg": get_cookie_arg(),
         "returncode": res.returncode,
