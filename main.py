@@ -37,6 +37,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register YouTube Live Stream Analytics Router
+try:
+    from youtube_router import router as youtube_router
+    app.include_router(youtube_router, prefix="/api/youtube", tags=["YouTube Analytics"])
+except Exception as e:
+    print(f"[WARN] YouTube Analytics router load note: {e}")
+
+
 CLIPS_DIR = Path("/tmp/kickcuttr" if sys.platform != "win32" else os.path.expanduser("~/.kickcuttr_tmp"))
 CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -146,7 +154,8 @@ def start_clip(req: ClipRequest, bg_tasks: BackgroundTasks):
         "status": "pending",
         "progress": 5.0,
         "message": "Queued for processing...",
-        "created_at": datetime.datetime.now().isoformat()
+        "created_at": datetime.datetime.now().isoformat(),
+        "req": {"url": url, "start": start, "end": end, "quality": quality}
     }
 
     bg_tasks.add_task(run_clip_job, job_id, url, start, end, quality)
@@ -157,6 +166,45 @@ def get_job_status(job_id: str):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job ID not found.")
     return jobs[job_id]
+
+@app.get("/recent_jobs")
+def get_recent_jobs():
+    return list(jobs.values())[-10:]
+
+@app.get("/list_clips")
+def list_clips():
+    res = []
+    if CLIPS_DIR.exists():
+        for f in CLIPS_DIR.iterdir():
+            res.append({"name": f.name, "size": f.stat().st_size, "time": f.stat().st_mtime})
+    return res
+
+@app.post("/debug_clip")
+def debug_clip(req: ClipRequest):
+    import subprocess
+    out_file = f"/tmp/kickcuttr/debug_{uuid.uuid4().hex[:6]}.mp4"
+    cmd = [
+        "yt-dlp",
+        "--download-sections", f"*{req.start}-{req.end}",
+        "-f", "best[height<=480]/best",
+        "-o", out_file,
+        "--no-playlist",
+        "--merge-output-format", "mp4",
+        "--newline",
+        req.url
+    ]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        return {
+            "returncode": p.returncode,
+            "stdout_tail": p.stdout.splitlines()[-15:] if p.stdout else [],
+            "stderr_tail": p.stderr.splitlines()[-15:] if p.stderr else [],
+            "out_exists": os.path.exists(out_file),
+            "out_size": os.path.getsize(out_file) if os.path.exists(out_file) else 0,
+            "tmp_files": os.listdir("/tmp/kickcuttr") if os.path.exists("/tmp/kickcuttr") else []
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/download/{filename}")
 def download_clip(filename: str):
