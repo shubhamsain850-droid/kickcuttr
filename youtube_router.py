@@ -52,6 +52,27 @@ def yt_analytics_health():
         "version": "1.2.0"
     }
 
+@router.get("/debug-3u")
+def debug_3u(vid: str = "3uG6S9V6yz8"):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        chat_template = os.path.join(tmp_dir, f"{vid}.%(ext)s")
+        cmd = ["yt-dlp"] + get_cookie_arg() + [
+            "--skip-download",
+            "--write-sub",
+            "--sub-langs", "live_chat",
+            "-o", chat_template,
+            f"https://www.youtube.com/watch?v={vid}"
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        found = [str(f.name) for f in Path(tmp_dir).glob("*")]
+        return {
+            "cmd": cmd,
+            "returncode": res.returncode,
+            "found_files": found,
+            "stdout": res.stdout[-400:] if res.stdout else "",
+            "stderr": res.stderr[-400:] if res.stderr else ""
+        }
+
 @router.post("/channel-streams")
 def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
     """
