@@ -30,20 +30,58 @@ from typing import Optional
 INR_PER_JEWEL: float = 0.42
 
 CURRENCY_RATES_TO_INR: dict[str, float] = {
-    "INR": 1.0, "₹": 1.0, "Rs": 1.0,
-    "USD": 86.5, "$": 86.5, "US$": 86.5,
-    "EUR": 93.0, "€": 93.0,
-    "GBP": 110.0, "£": 110.0,
-    "CAD": 63.5, "C$": 63.5,
-    "AUD": 56.0, "A$": 56.0,
-    "AED": 23.5,
-    "SGD": 64.5,
-    "MYR": 18.5,
-    "PHP": 1.5,
+    "INR": 1.0,
+    "USD": 86.85,
+    "EUR": 94.20,
+    "GBP": 110.50,
+    "CAD": 63.80,
+    "AUD": 56.50,
+    "SGD": 64.80,
+    "AED": 23.65,
+    "SAR": 23.15,
+    "BRL": 15.20,
+    "JPY": 0.58,
+    "KRW": 0.063,
+    "NZD": 51.50,
+    "HKD": 11.15,
+    "TWD": 2.70,
+    "PHP": 1.50,
+    "PKR": 0.31,
     "BDT": 0.72,
-    "JPY": 0.58, "¥": 0.58,
-    "KRW": 0.063, "₩": 0.063
+    "RUB": 0.90,
+    "TRY": 2.50,
+    "PLN": 21.80,
+    "MXN": 4.30,
+    "IDR": 0.0055,
+    "THB": 2.45,
+    "VND": 0.0034,
 }
+
+SYMBOL_TO_CURRENCY: list[tuple[str, str]] = sorted([
+    ("Mex$", "MXN"),
+    ("US$", "USD"), ("CA$", "CAD"), ("C$", "CAD"),
+    ("AU$", "AUD"), ("A$", "AUD"),
+    ("NZ$", "NZD"), ("HK$", "HKD"), ("NT$", "TWD"),
+    ("SG$", "SGD"), ("S$", "SGD"),
+    ("R$", "BRL"),
+    ("Rs.", "PKR"), ("PKR", "PKR"),
+    ("BDT", "BDT"), ("৳", "BDT"),
+    ("AED", "AED"), ("SAR", "SAR"),
+    ("PHP", "PHP"), ("₱", "PHP"),
+    ("JP¥", "JPY"), ("JPY", "JPY"), ("¥", "JPY"),
+    ("KRW", "KRW"), ("₩", "KRW"),
+    ("EUR", "EUR"), ("€", "EUR"),
+    ("GBP", "GBP"), ("£", "GBP"),
+    ("INR", "INR"), ("₹", "INR"), ("Rs", "INR"),
+    ("$", "USD"),   ("USD", "USD"),
+    ("zł", "PLN"),  ("PLN", "PLN"),
+    ("₺", "TRY"),   ("TRY", "TRY"),
+    ("₽", "RUB"),   ("RUB", "RUB"),
+    ("IDR", "IDR"), ("Rp", "IDR"),
+    ("THB", "THB"), ("฿", "THB"),
+    ("VND", "VND"), ("₫", "VND")
+], key=lambda x: len(x[0]), reverse=True)
+
 
 DEFAULT_TIER_PRICES: dict[str, float] = {
     "Level 1": 59.0,
@@ -81,18 +119,30 @@ def extract_video_id(url_or_id: str) -> str:
 
 
 def parse_amount(text: str) -> tuple[float, str]:
-    """Parse amount and currency symbol from string (e.g. '₹101.00', '$1.99', '100 INR')."""
+    """Parse amount and currency symbol from string (e.g. '₹101.00', '$1.99', 'CA$ 5.00', 'R$ 10,00')."""
     if not text:
         return 0.0, "INR"
     
     currency = "INR"
-    for sym, curr in [("₹", "INR"), ("Rs", "INR"), ("US$", "USD"), ("$", "USD"),
-                      ("€", "EUR"), ("£", "GBP"), ("C$", "CAD"), ("A$", "AUD")]:
+    for sym, curr in SYMBOL_TO_CURRENCY:
         if sym in text:
             currency = curr
             break
 
-    clean = re.sub(r'[^\d.]', '', text)
+    # Handle comma as decimal or thousand separator safely
+    clean = re.sub(r'[^0-9.,]', '', text).strip()
+    if ',' in clean and '.' in clean:
+        if clean.rfind(',') > clean.rfind('.'):
+            clean = clean.replace('.', '').replace(',', '.')
+        else:
+            clean = clean.replace(',', '')
+    elif ',' in clean and '.' not in clean:
+        parts = clean.split(',')
+        if len(parts) == 2 and len(parts[1]) <= 2:
+            clean = parts[0] + '.' + parts[1]
+        else:
+            clean = clean.replace(',', '')
+
     try:
         val = float(clean)
     except ValueError:
@@ -128,6 +178,7 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
     unique_donors = set()
     unique_chatters = set()
     custom_tiers_discovered = set()
+    currency_breakdown = defaultdict(lambda: {"amount": 0.0, "count": 0, "amount_inr": 0.0})
 
     total_sc_inr = 0.0
     total_jewels_count = 0
@@ -166,6 +217,9 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
                     "stream_id": video_id
                 })
                 total_sc_inr += amt_inr
+                currency_breakdown[curr]["amount"] = round(currency_breakdown[curr]["amount"] + amt, 2)
+                currency_breakdown[curr]["count"] += 1
+                currency_breakdown[curr]["amount_inr"] = round(currency_breakdown[curr]["amount_inr"] + amt_inr, 2)
                 unique_donors.add(author)
                 unique_chatters.add(author)
 
@@ -194,6 +248,9 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
                     "stream_id": video_id
                 })
                 total_sc_inr += amt_inr
+                currency_breakdown[curr]["amount"] = round(currency_breakdown[curr]["amount"] + amt, 2)
+                currency_breakdown[curr]["count"] += 1
+                currency_breakdown[curr]["amount_inr"] = round(currency_breakdown[curr]["amount_inr"] + amt_inr, 2)
                 unique_donors.add(author)
                 unique_chatters.add(author)
 
@@ -347,7 +404,8 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
             "jewels_count": total_jewels_count,
             "memberships_inr": round(total_mem_inr, 2),
             "memberships_count": len(memberships),
-            "donors_count": len(unique_donors)
+            "donors_count": len(unique_donors),
+            "currency_breakdown": dict(currency_breakdown)
         }
     }
 
