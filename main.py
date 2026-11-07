@@ -37,6 +37,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register YouTube Live Stream Analytics Router
+try:
+    from youtube_router import router as youtube_router
+    app.include_router(youtube_router, prefix="/api/youtube", tags=["YouTube Analytics"])
+except Exception as e:
+    print(f"[WARN] YouTube Analytics router load note: {e}")
+
+
 CLIPS_DIR = Path("/tmp/kickcuttr" if sys.platform != "win32" else os.path.expanduser("~/.kickcuttr_tmp"))
 CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 
