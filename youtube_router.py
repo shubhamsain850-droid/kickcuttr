@@ -47,29 +47,6 @@ def yt_analytics_health():
         "version": "1.2.0"
     }
 
-@router.get("/debug-ytdlp")
-def debug_ytdlp(vid: str = "hB6xqvEb7-A"):
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        chat_template = os.path.join(tmp_dir, f"{vid}.%(ext)s")
-        cmd = [
-            "yt-dlp",
-            "--extractor-args", "youtube:player_client=android",
-            "--ignore-no-formats-error",
-            "--skip-download",
-            "--write-sub",
-            "--sub-langs", "live_chat",
-            "-o", chat_template,
-            f"https://www.youtube.com/watch?v={vid}"
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        found = [str(f.name) for f in Path(tmp_dir).glob("*")]
-        return {
-            "returncode": res.returncode,
-            "found_files": found,
-            "stdout": res.stdout[-400:] if res.stdout else "",
-            "stderr": res.stderr[-400:] if res.stderr else ""
-        }
-
 @router.post("/channel-streams")
 def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
     """
