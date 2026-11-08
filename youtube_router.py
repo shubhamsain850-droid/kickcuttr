@@ -16,9 +16,11 @@ from pathlib import Path
 from youtube_engine import (
     extract_video_id,
     parse_chat_json_lines,
+    parse_all_chat_messages,
     get_channel_streams,
     get_cookie_arg,
-    fetch_innertube_stream_data
+    fetch_innertube_stream_data,
+    fetch_video_comments
 )
 
 def anti_cache_headers(response: Response):
@@ -34,6 +36,13 @@ router = APIRouter(dependencies=[Depends(anti_cache_headers)])
 
 class AnalyzeStreamRequest(BaseModel):
     url: str
+
+class FetchChatRequest(BaseModel):
+    url: str
+
+class FetchCommentsRequest(BaseModel):
+    url: str
+    max_comments: Optional[int] = 300
 
 class ChannelStreamsRequest(BaseModel):
     channel_url: str
@@ -74,7 +83,7 @@ def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
         "streams": streams
     }
 
-def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None) -> dict:
+def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, include_all_chat: bool = False) -> dict:
     """
     [FROZEN ENGINE - PRESERVED AS PERMANENT AUTOMATIC FALLBACK]
     Downloads live chat replay via yt-dlp subprocess in isolated temp directory.
@@ -135,7 +144,11 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None) ->
         with open(chat_file, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
-        parsed_data = parse_chat_json_lines(lines, video_id=vid)
+        if include_all_chat:
+            parsed_data = parse_all_chat_messages(lines, video_id=vid)
+        else:
+            parsed_data = parse_chat_json_lines(lines, video_id=vid)
+
         return {
             "success": True,
             "video_id": vid,
@@ -162,7 +175,7 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
 
     # 1. Primary Engine: Ultra-Fast Direct InnerTube Streaming (100% in-memory, zero disk footprint)
     try:
-        innertube_res = fetch_innertube_stream_data(vid)
+        innertube_res = fetch_innertube_stream_data(vid, include_all_chat=False)
         if innertube_res and innertube_res.get("success"):
             return innertube_res
     except Exception as e:
@@ -170,7 +183,51 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
 
     # 2. Frozen Fallback Engine: yt-dlp Subprocess (100% Preserved)
     print(f"[Fallback] Running frozen yt-dlp engine for video {vid}...")
-    return frozen_ytdlp_analyze_stream(vid)
+    return frozen_ytdlp_analyze_stream(vid, include_all_chat=False)
+
+
+@router.post("/fetch-chat")
+def fetch_chat_endpoint(req: FetchChatRequest):
+    """
+    Downloads & extracts ALL live chat messages (normal chat, superchats, stickers, memberships, jewels)
+    with usernames, timestamps, author badges, event highlights, and top chatters leaderboard.
+    """
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="YouTube URL or Video ID is required.")
+
+    vid = extract_video_id(url)
+    if not vid:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL or Video ID.")
+
+    # 1. Primary Engine: Ultra-Fast Direct InnerTube Streaming (100% in-memory, zero disk)
+    try:
+        res = fetch_innertube_stream_data(vid, include_all_chat=True)
+        if res and res.get("success"):
+            return res
+    except Exception as e:
+        print(f"[Fetch-Chat InnerTube Error] Video {vid}: {e}. Switching to frozen yt-dlp fallback...")
+
+    # 2. Frozen Fallback Engine
+    return frozen_ytdlp_analyze_stream(vid, include_all_chat=True)
+
+
+@router.post("/fetch-comments")
+def fetch_comments_endpoint(req: FetchCommentsRequest):
+    """
+    Directly extracts comments from an uploaded or saved YouTube video.
+    Extracts comment text, author name, avatar, relative date, likes, and reply counts.
+    """
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="YouTube URL or Video ID is required.")
+
+    vid = extract_video_id(url)
+    if not vid:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL or Video ID.")
+
+    max_c = min(req.max_comments or 300, 1000)
+    return fetch_video_comments(vid, max_comments=max_c)
 
 
 @router.post("/upload-json")
@@ -183,6 +240,26 @@ async def analyze_uploaded_json_endpoint(file: UploadFile = File(...)):
         lines = content.decode("utf-8", errors="ignore").splitlines()
         clean_name = file.filename.replace(".live_chat.json", "").replace(".json", "")
         parsed_data = parse_chat_json_lines(lines, video_id=clean_name)
+        return {
+            "success": True,
+            "title": clean_name,
+            "filename": file.filename,
+            "data": parsed_data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse uploaded JSON file: {str(e)}")
+
+
+@router.post("/upload-chat-json")
+async def analyze_uploaded_chat_json_endpoint(file: UploadFile = File(...)):
+    """
+    Upload a local .live_chat.json file to parse ALL chats and events instantly.
+    """
+    try:
+        content = await file.read()
+        lines = content.decode("utf-8", errors="ignore").splitlines()
+        clean_name = file.filename.replace(".live_chat.json", "").replace(".json", "")
+        parsed_data = parse_all_chat_messages(lines, video_id=clean_name)
         return {
             "success": True,
             "title": clean_name,
