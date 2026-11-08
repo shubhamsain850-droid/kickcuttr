@@ -3,3 +3,5 @@ uvicorn[standard]==0.29.0
 huggingface-hub==0.24.6
 yt-dlp>=2024.1.0
 python-multipart==0.0.9
+requests>=2.31.0
+
