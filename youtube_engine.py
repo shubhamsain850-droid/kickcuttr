@@ -1548,8 +1548,17 @@ def get_socialblade_channel_analytics(channel_input: str) -> dict:
     subs = base_meta.get("subscribers_count", 0) or 100_000
     views = base_meta.get("total_views_count", 0) or 10_000_000
     videos = base_meta.get("videos_count", 0) or 100
-    country = base_meta.get("country") or "India"
-    category = "Gaming" if base_meta.get("detected_niche") == "gaming" else "Entertainment"
+    desc = base_meta.get("description", "")
+    country = base_meta.get("country")
+    if not country:
+        if any(w in desc.lower() for w in ["india", "noida", "delhi", "mumbai", "bengaluru", "kolkata", "punjab", "upi:", "@ybl", "@paytm", "hindi"]):
+            country = "India (IN)"
+        else:
+            country = "India (IN)"
+    elif "india" in country.lower() and "(in)" not in country.lower():
+        country = "India (IN)"
+
+    category = "Gaming" if base_meta.get("detected_niche") == "gaming" else (base_meta.get("detected_niche", "Creator").title())
 
     # SocialBlade Grade Calculation
     if subs >= 50_000_000 and views >= 20_000_000_000:
