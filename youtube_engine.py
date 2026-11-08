@@ -12,11 +12,14 @@ import os
 import re
 import subprocess
 import time
+import math
+import random
+import urllib.parse
 import http.cookiejar
 import requests
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -1589,13 +1592,13 @@ def get_socialblade_channel_analytics(channel_input: str) -> dict:
     # Generate 14-Day Daily Metrics Table (Deterministic seed)
     avg_daily_views = max(1500, int((views * 0.0042) / 30))
     daily_rows = []
-    curr_date = datetime.date.today()
+    curr_date = date.today()
     running_views = views
     running_subs = subs
     rng = random.Random(views)
 
     for i in range(14):
-        d = curr_date - datetime.timedelta(days=i)
+        d = curr_date - timedelta(days=i)
         day_name = d.strftime("%a")
         date_str = d.strftime("%Y-%m-%d")
 
