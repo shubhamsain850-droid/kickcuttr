@@ -1136,8 +1136,9 @@ def detect_niche(category: str = "", title: str = "", tags: list = None, desc: s
     if any(k in text for k in ["crypto", "bitcoin", "stocks", "trading", "invest", "mutual fund", "sip", "share market", "finance", "options trading", "money management", "forex", "wealth", "passive income"]):
         return "finance"
 
-    # 2. Business / Marketing / SaaS / E-commerce
-    if any(k in text for k in ["business", "saas", "marketing", "entrepreneur", "dropshipping", "ecommerce", "startups", "sales", "agency", "freelancing", "digital marketing", "agency"]):
+    # 2. Business / Marketing / SaaS / E-commerce (exclude business inquiry emails)
+    bus_text = re.sub(r'business\s*(inquir\w*|email|contact|@|:)', '', text)
+    if any(k in bus_text for k in ["business", "saas", "marketing", "entrepreneur", "dropshipping", "ecommerce", "startups", "sales", "agency", "freelancing", "digital marketing"]):
         return "business"
 
     # 3. Real Estate & Architecture
