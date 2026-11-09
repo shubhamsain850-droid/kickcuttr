@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — KickCutter</title>
+  <meta name="description" content="KickCutter Privacy Policy. Learn how we handle your data. We do not store videos, personal data, or sell data to third parties.">
+  <link rel="canonical" href="https://kickcutter.pages.dev/privacy">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=3">
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png?v=3">
+  <link rel="shortcut icon" href="/favicon.ico?v=3">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #090c10;
+      --card-bg: #111620;
+      --card-border: #1e2636;
+      --accent: #53fc18;
+      --accent-hover: #45dc11;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      line-height: 1.6;
+    }
+    nav {
+      background: rgba(9, 12, 16, 0.95);
+      border-bottom: 1px solid var(--card-border);
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(10px);
+    }
+        .logo {
+      font-size: 1.45rem;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      text-decoration: none;
+    }
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      display: inline-block;
+      flex-shrink: 0;
+      filter: drop-shadow(0 0 8px rgba(83, 252, 24, 0.35));
+      transition: transform 0.2s ease, filter 0.2s ease;
+    }
+    .logo:hover .logo-icon {
+      transform: rotate(-6deg) scale(1.08);
+      filter: drop-shadow(0 0 14px rgba(83, 252, 24, 0.7));
+    }
+    .logo span { color: var(--accent); }
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-left: 1.5rem;
+      transition: color 0.15s;
+    }
+    .nav-links a:hover { color: #fff; }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 3rem 1.5rem 5rem;
+    }
+    .page-tag {
+      display: inline-block;
+      background: rgba(83, 252, 24, 0.12);
+      color: var(--accent);
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 4px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 252, 24, 0.25);
+      margin-bottom: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    h1 {
+      font-size: 2.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 0.8rem;
+    }
+    .last-updated {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      margin-bottom: 2.5rem;
+    }
+    .section-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 1.75rem;
+      margin-bottom: 1.5rem;
+    }
+    h2 {
+      font-size: 1.3rem;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    h2 span { color: var(--accent); }
+    p {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+      margin-bottom: 0.8rem;
+    }
+    p:last-child { margin-bottom: 0; }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin: 0.8rem 0;
+    }
+    ul li {
+      position: relative;
+      padding-left: 1.5rem;
+      margin-bottom: 0.5rem;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+    }
+    ul li::before {
+      content: "•";
+      color: var(--accent);
+      font-size: 1.4rem;
+      position: absolute;
+      left: 0.2rem;
+      top: -0.2rem;
+    }
+    footer {
+      border-top: 1px solid var(--card-border);
+      padding: 2rem 1.5rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    footer a {
+      color: var(--text-muted);
+      text-decoration: none;
+      margin: 0 0.6rem;
+    }
+    footer a:hover { color: var(--accent); }
+    @media (max-width: 640px) {
+      nav { flex-direction: column; gap: 0.75rem; align-items: flex-start; padding: 1rem; }
+      .nav-links { margin-left: 0; display: flex; flex-wrap: wrap; gap: 0.6rem; }
+      .nav-links a { margin-left: 0; font-size: 0.85rem; }
+      .container { padding: 1.5rem 1rem 3.5rem; }
+      h1 { font-size: 1.85rem; line-height: 1.25; }
+      .subtitle { font-size: 0.95rem; margin-bottom: 1.5rem; }
+      .section-card { padding: 1.25rem 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <nav>
+    <a href="/" class="logo">
+      <svg class="logo-icon" viewBox="0 0 64 64" fill="none">
+        <rect width="64" height="64" rx="14" fill="#090c10"/>
+        <rect x="1" y="1" width="62" height="62" rx="13" stroke="#53fc18" stroke-width="2" stroke-opacity="0.4"/>
+        <rect x="12" y="12" width="10" height="40" rx="3" fill="#53fc18"/>
+        <rect x="14.5" y="16.5" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <rect x="14.5" y="25" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <rect x="14.5" y="34.5" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <rect x="14.5" y="43" width="5" height="4.5" rx="1.2" fill="#090c10"/>
+        <path d="M26 34L50 13C51.5 11.5 53 13 52 15L41 29L32 35Z" fill="#53fc18"/>
+        <path d="M26 34L50 13" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/>
+        <path d="M26 30L50 51C51.5 52.5 53 51 52 49L41 35L32 29Z" fill="#53fc18"/>
+        <path d="M26 30L50 51" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round"/>
+        <circle cx="28" cy="32" r="4" fill="#090c10" stroke="#53fc18" stroke-width="2"/>
+        <circle cx="28" cy="32" r="1.5" fill="#ffffff"/>
+        <circle cx="51" cy="32" r="1.5" fill="#53fc18"/>
+      </svg>
+      Kick<span>Cutter</span>
+    </a>
+        <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/kick-clip-cutter">Kick Clip Cutter</a>
+      <a href="/kick-vod-downloader">Kick VOD Downloader</a>
+      <a href="/about">About</a>
+      <a href="/contact">Contact</a>
+    </div>
+  </nav>
+
+  <div class="container">
+    <span class="page-tag">Legal</span>
+    <h1>Privacy Policy</h1>
+    <p class="last-updated">Last updated: October 31, 2026</p>
+
+    <div class="section-card">
+      <h2><span>1.</span> Overview</h2>
+      <p>Welcome to KickCutter (accessible at <a href="https://kickcutter.pages.dev" style="color:var(--accent);">https://kickcutter.pages.dev</a>). We are dedicated to providing a fast, secure, and privacy-respecting video clipping tool for Kick.com streams, VODs, and clips.</p>
+      <p>This Privacy Policy outlines how your data is handled when you use our service. In short: <strong>we do not collect personal identities, we do not permanently store videos, and we never sell user data.</strong></p>
+    </div>
+
+    <div class="section-card">
+      <h2><span>2.</span> Information We Process</h2>
+      <ul>
+        <li><strong>Video URLs & Timestamps:</strong> When you submit a Kick URL and time range, our servers process that specific request to slice the requested segment.</li>
+        <li><strong>Server Execution Logs:</strong> We maintain standard temporary technical server logs (such as HTTP request status, timestamp, and anonymous IP address) for rate-limiting, abuse prevention, and performance debugging.</li>
+        <li><strong>No User Accounts:</strong> You do not need an account, password, or credit card to use KickCutter.</li>
+      </ul>
+    </div>
+
+    <div class="section-card">
+      <h2><span>3.</span> How Clips Are Handled (Zero Permanent Storage)</h2>
+      <p>KickCutter does not store any stream or VOD video permanently:</p>
+      <ul>
+        <li>When a clip is generated, it is stored in a temporary server cache solely so you can download it.</li>
+        <li>Temporary clip files are <strong>automatically purged and deleted</strong> after download or within a maximum of 2 hours.</li>
+        <li>We do not archive, catalog, or share your trimmed clips with anyone else.</li>
+      </ul>
+    </div>
+
+    <div class="section-card">
+      <h2><span>4.</span> Cookies and Tracking</h2>
+      <p>KickCutter does not use tracking cookies, behavioral tracking scripts, or cross-site fingerprinting. Standard browser session storage may be used strictly to retain your user UI preferences (such as quality settings).</p>
+    </div>
+
+    <div class="section-card">
+      <h2><span>5.</span> Third-Party Services</h2>
+      <p>Our website interfaces with Cloudflare Pages (for frontend content delivery) and Hugging Face infrastructure (for backend processing). These providers operate under their respective privacy and security standards.</p>
+    </div>
+
+    <div class="section-card">
+      <h2><span>6.</span> Disclaimer & Affiliation</h2>
+      <p>KickCutter is an independent, open-source utility and is not affiliated with, endorsed by, or sponsored by Kick.com or its parent company.</p>
+    </div>
+
+    <div class="section-card">
+      <h2><span>7.</span> Contact Us</h2>
+      <p>If you have questions regarding this Privacy Policy or data inquiries, please reach out via our <a href="/contact" style="color:var(--accent); font-weight:600;">Contact Page</a>.</p>
+    </div>
+  </div>
+
+  <footer>
+    <p style="margin-bottom:0.6rem;">&copy; 2026 KickCutter. Free &amp; Open Source Online Video Clipper for Kick.com.</p>
+        <div>
+      <a href="/">Home</a> &bull;
+      <a href="/kick-clip-cutter">Kick Clip Cutter</a> &bull;
+      <a href="/kick-vod-downloader">Kick VOD Downloader</a> &bull;
+      <a href="/about">About</a> &bull;
+      <a href="/privacy">Privacy Policy</a> &bull;
+      <a href="/terms">Terms</a> &bull;
+      <a href="/contact">Contact</a>
+    </div>
+  </footer>
+
+</body>
+</html>
+
