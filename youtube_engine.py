@@ -809,16 +809,10 @@ def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_ch
         'Accept-Language': 'en-US,en;q=0.9',
     })
 
-    # Optional cookies if cookies.txt is present
-    for p in [Path("cookies.txt"), Path(__file__).parent / "cookies.txt", Path("/tmp/cookies.txt")]:
-        if p.exists() and p.stat().st_size > 100:
-            try:
-                cj = http.cookiejar.MozillaCookieJar(str(p.resolve()))
-                cj.load(ignore_discard=True, ignore_expires=True)
-                session.cookies.update(cj)
-                break
-            except Exception:
-                pass
+    # Live chat replay requires a clean session without user account cookies,
+    # because user cookies inject personal watch history / resume timestamps,
+    # which causes YouTube to jump mid-stream and miss all earlier chats.
+    # Cookies are only needed for age-restricted video comments or restricted video metadata.
 
     try:
         # 1. Fetch initial watch page for API key, title, and initial continuation token
