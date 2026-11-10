@@ -208,21 +208,13 @@ def get_twitch_info(url: str) -> Dict[str, Any]:
         seen_res = set()
 
         preview_url = ""
-        # Prefer browser-accessible CDN URLs (avoid usher.ttvnw.net which blocks browser CORS)
+        # 1. Filter formats for valid video resolutions & CORS-friendly video preview URL
         for f in formats:
             f_url = f.get("url") or ""
-            if "usher.ttvnw.net" in f_url:
-                continue
-            if ".m3u8" in f_url or ".mp4" in f_url:
-                preview_url = f_url
-                break
-
-        if not preview_url:
-            raw_manifest = data.get("manifest_url") or data.get("url") or ""
-            if "usher.ttvnw.net" not in raw_manifest:
-                preview_url = raw_manifest
-
+            fmt_id = str(f.get("format_id") or "").lower()
+            vcodec = str(f.get("vcodec") or "").lower()
             h = f.get("height")
+
             if h and h not in seen_res:
                 seen_res.add(h)
                 fps = f.get("fps") or 0
@@ -238,9 +230,34 @@ def get_twitch_info(url: str) -> Dict[str, Any]:
                     "format_id": f.get("format_id") or f"{h}p"
                 })
 
+            if "usher.ttvnw.net" in f_url or "audio_only" in fmt_id or "audio_only" in f_url.lower() or vcodec == "none":
+                continue
+
+            if ".m3u8" in f_url or ".mp4" in f_url:
+                # Prefer 360p or 480p or first video stream for fast preview
+                if not preview_url or (h and 360 <= h <= 480):
+                    preview_url = f_url
+
+        if not preview_url:
+            raw_manifest = data.get("manifest_url") or data.get("url") or ""
+            if "usher.ttvnw.net" not in raw_manifest:
+                preview_url = raw_manifest
+
         available_resolutions = sorted(available_resolutions, key=lambda x: x["height"], reverse=True)
         if len(available_resolutions) <= 1:
             available_resolutions = get_default_resolutions()
+
+        # Official Twitch embed player URL (runs in iframe with zero CORS restrictions)
+        clean_stream_id = re.sub(r'^[a-zA-Z]+', '', stream_id)
+        channel_name = re.sub(r'[^a-zA-Z0-9_]', '', uploader.lower())
+        if is_live and channel_name:
+            embed_url = f"https://player.twitch.tv/?channel={channel_name}&parent=streamslicer.pages.dev&parent=localhost&autoplay=false"
+        elif clean_stream_id:
+            embed_url = f"https://player.twitch.tv/?video={clean_stream_id}&parent=streamslicer.pages.dev&parent=localhost&autoplay=false"
+        elif channel_name:
+            embed_url = f"https://player.twitch.tv/?channel={channel_name}&parent=streamslicer.pages.dev&parent=localhost&autoplay=false"
+        else:
+            embed_url = ""
 
         return {
             "success": True,
@@ -255,7 +272,8 @@ def get_twitch_info(url: str) -> Dict[str, Any]:
             "preview_url": preview_url,
             "available_resolutions": available_resolutions,
             "webpage_url": data.get("webpage_url", target_url),
-            "source_m3u8": ""
+            "source_m3u8": preview_url,
+            "embed_url": embed_url
         }
     except Exception as e:
         return {"success": False, "error": f"Twitch fetch failed: {str(e)}"}
@@ -318,7 +336,8 @@ def get_kick_vod_data(video_id: str) -> Dict[str, Any]:
                 "preview_url": source_url,
                 "available_resolutions": resolutions,
                 "slug": channel.get("slug", ""),
-                "source_m3u8": source_url
+                "source_m3u8": source_url,
+                "embed_url": f"https://player.kick.com/{channel.get('slug')}" if channel.get("slug") else ""
             }
     except Exception as e:
         print(f"[StreamSlicer] Kick VOD API warning for '{video_id}': {e}")
@@ -408,7 +427,8 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
             "preview_url": preview_url,
             "available_resolutions": resolutions,
             "slug": slug,
-            "source_m3u8": preview_url
+            "source_m3u8": preview_url,
+            "embed_url": f"https://player.kick.com/{slug}" if slug else ""
         }
 
     # If channel is OFFLINE, fetch most recent recorded VOD
@@ -447,7 +467,8 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
                 "preview_url": source_url,
                 "available_resolutions": parse_m3u8_resolutions(source_url) if source_url else get_default_resolutions(),
                 "slug": slug,
-                "source_m3u8": source_url
+                "source_m3u8": source_url,
+                "embed_url": f"https://player.kick.com/{slug}" if slug else ""
             }
 
     # 4. Fallback to yt-dlp metadata
@@ -472,7 +493,8 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
                 "preview_url": preview_url,
                 "available_resolutions": parse_m3u8_resolutions(preview_url) if preview_url else get_default_resolutions(),
                 "slug": slug,
-                "source_m3u8": preview_url
+                "source_m3u8": preview_url,
+                "embed_url": f"https://player.kick.com/{slug}" if slug else ""
             }
     except Exception as e:
         print(f"[StreamSlicer] yt-dlp kick metadata error: {e}")

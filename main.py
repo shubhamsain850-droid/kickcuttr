@@ -99,6 +99,7 @@ def get_info(req: InfoRequest):
         "thumbnail": info.get("thumbnail"),
         "is_live": info.get("is_live", False),
         "preview_url": info.get("preview_url", ""),
+        "embed_url": info.get("embed_url", ""),
         "available_resolutions": info.get("available_resolutions", []),
         "slug": info.get("slug", ""),
         "webpage_url": info.get("webpage_url", url)
