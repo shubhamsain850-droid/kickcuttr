@@ -290,15 +290,27 @@ def extract_video_uuid(url: str) -> str:
     return ""
 
 
+def clean_kick_url(raw: str) -> str:
+    """Normalizes Kick URLs and handles bare channel names or missing scheme."""
+    raw = raw.strip()
+    if not raw.startswith("http://") and not raw.startswith("https://"):
+        if "kick.com" in raw:
+            raw = "https://" + raw.lstrip("/")
+        else:
+            raw = f"https://kick.com/{raw.replace('@', '')}"
+    return raw
+
+
 def extract_slug_from_url(url: str) -> str:
     """Extracts username slug or channel name from Kick URL."""
     url = url.strip()
-    m = re.search(r'kick\.com/([a-zA-Z0-9_\-]+)', url)
+    m = re.search(r'kick\.com/([a-zA-Z0-9_\-]+)', url, re.IGNORECASE)
     if m:
         slug = m.group(1).lower()
         if slug not in ['video', 'categories', 'search', 'following', 'clips']:
             return slug
-    return ""
+    clean = re.sub(r'[^a-zA-Z0-9_\-]', '', url)
+    return clean.lower()
 
 
 def get_kick_vod_data(video_id: str) -> Dict[str, Any]:
@@ -316,7 +328,7 @@ def get_kick_vod_data(video_id: str) -> Dict[str, Any]:
             dur_ms = data.get("duration") or 0
             dur_sec = int(dur_ms / 1000) if dur_ms > 10000 else int(dur_ms)
             
-            thumb = data.get("thumbnail")
+            thumb = data.get("thumb") or (data.get("livestream") or {}).get("thumbnail") or data.get("thumbnail")
             if isinstance(thumb, dict):
                 thumb = thumb.get("src") or thumb.get("url")
 
@@ -380,7 +392,7 @@ def get_kick_channel_videos(slug: str) -> List[Dict[str, Any]]:
 
 def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
     """Extracts Kick VOD, livestream, or channel info."""
-    target = url_or_channel.strip()
+    target = clean_kick_url(url_or_channel)
 
     # 1. Direct Kick VOD UUID
     video_uuid = extract_video_uuid(target)
@@ -390,11 +402,7 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
             return vod_data
 
     # 2. Extract Channel Slug
-    if not target.startswith("http"):
-        slug = target.replace("@", "")
-        target = f"https://kick.com/{slug}"
-    else:
-        slug = extract_slug_from_url(target)
+    slug = extract_slug_from_url(target)
 
     # 3. Fetch channel data
     channel_api_data = {}
@@ -409,7 +417,7 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
     if is_live and livestream:
         preview_url = channel_api_data.get("playback_url") or livestream.get("source") or ""
         livestream_thumb = livestream.get("thumbnail")
-        thumb = livestream_thumb.get("url") if isinstance(livestream_thumb, dict) else livestream_thumb
+        thumb = livestream_thumb.get("url") if isinstance(livestream_thumb, dict) else (livestream_thumb or livestream.get("thumb"))
         dur = livestream.get("duration") or 0
         resolutions = parse_m3u8_resolutions(preview_url) if preview_url else get_default_resolutions()
 
@@ -452,6 +460,8 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
             thumb = latest_v.get("thumbnail")
             if isinstance(thumb, dict):
                 thumb = thumb.get("src") or thumb.get("url")
+            elif not thumb:
+                thumb = (latest_v.get("livestream") or {}).get("thumbnail") or latest_v.get("thumb")
 
             return {
                 "success": True,
