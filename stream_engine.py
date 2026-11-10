@@ -390,21 +390,100 @@ def get_kick_channel_videos(slug: str) -> List[Dict[str, Any]]:
         return []
 
 
+def extract_kick_via_ytdlp(target_url: str, slug: str = "") -> Dict[str, Any]:
+    """Uses yt-dlp to extract high-accuracy Kick VOD or stream metadata."""
+    cmd = ["yt-dlp", "--dump-json", "--skip-download", "--no-warnings", "--no-playlist", target_url]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+        if proc.returncode == 0 and proc.stdout.strip():
+            data = json.loads(proc.stdout.strip().splitlines()[0])
+            duration = int(data.get("duration") or 0)
+            formats = data.get("formats", [])
+            preview_url = data.get("manifest_url") or data.get("url") or ""
+
+            # Check formats for clean .m3u8
+            for f in formats:
+                f_url = f.get("url") or ""
+                if ".m3u8" in f_url and "d26yk4zpyhjeeq.cloudfront.net" in f_url:
+                    preview_url = f_url
+                    break
+
+            available_resolutions = [
+                {"id": "best", "height": 9999, "label": "⚡ Best Available Source (Original)", "format_id": "best"}
+            ]
+            seen_res = set()
+            for f in formats:
+                h = f.get("height")
+                if h and h not in seen_res:
+                    seen_res.add(h)
+                    fps = f.get("fps") or 0
+                    fps_str = f"{int(fps)}" if fps >= 50 else ""
+                    badge = "Full HD" if h >= 1080 else ("HD" if h >= 720 else ("SD" if h >= 480 else ""))
+                    badge_str = f" {badge}" if badge else ""
+                    available_resolutions.append({
+                        "id": f"{h}p",
+                        "height": h,
+                        "label": f"⚡ {h}p{fps_str}{badge_str}".strip(),
+                        "format_id": f.get("format_id") or f"{h}p"
+                    })
+
+            available_resolutions = sorted(available_resolutions, key=lambda x: x["height"], reverse=True)
+            if len(available_resolutions) <= 1:
+                available_resolutions = get_default_resolutions()
+
+            thumb = data.get("thumbnail") or ""
+            uploader = data.get("uploader") or data.get("channel") or slug or "Kick Streamer"
+            clean_slug = slug or uploader.lower().replace(" ", "")
+
+            # If thumbnail is missing, fetch channel avatar
+            if not thumb and clean_slug:
+                try:
+                    ch_data = get_kick_channel_data(clean_slug)
+                    thumb = ch_data.get("user", {}).get("profile_pic") or ""
+                except Exception:
+                    pass
+
+            return {
+                "success": True,
+                "platform": "kick",
+                "title": data.get("title") or data.get("fulltitle") or "Kick Video",
+                "uploader": uploader,
+                "stream_id": str(data.get("id") or "N/A"),
+                "duration": duration,
+                "duration_str": seconds_to_time(duration) if duration else "00:00:00",
+                "thumbnail": thumb,
+                "webpage_url": data.get("webpage_url") or target_url,
+                "is_live": data.get("is_live", False),
+                "preview_url": preview_url,
+                "available_resolutions": available_resolutions,
+                "slug": clean_slug,
+                "source_m3u8": preview_url,
+                "embed_url": f"https://player.kick.com/{clean_slug}" if clean_slug else ""
+            }
+    except Exception as e:
+        print(f"[StreamSlicer] yt-dlp kick extraction warning: {e}")
+    return {}
+
+
 def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
     """Extracts Kick VOD, livestream, or channel info."""
     target = clean_kick_url(url_or_channel)
-
-    # 1. Direct Kick VOD UUID
+    is_video_url = ("/videos/" in target or "/video/" in target)
     video_uuid = extract_video_uuid(target)
-    if video_uuid:
-        vod_data = get_kick_vod_data(video_uuid)
-        if vod_data and vod_data.get("success"):
-            return vod_data
-
-    # 2. Extract Channel Slug
     slug = extract_slug_from_url(target)
 
-    # 3. Fetch channel data
+    # 1. If user passed a specific VOD URL or UUID
+    if is_video_url or video_uuid:
+        if video_uuid:
+            vod_data = get_kick_vod_data(video_uuid)
+            if vod_data and vod_data.get("success") and vod_data.get("duration", 0) > 0:
+                return vod_data
+        # If API v1 failed or returned 0 duration, extract directly via yt-dlp
+        yt_vod = extract_kick_via_ytdlp(target, slug)
+        if yt_vod and yt_vod.get("success") and yt_vod.get("duration", 0) > 0:
+            return yt_vod
+
+    # 2. Channel live stream or recent broadcasts
     channel_api_data = {}
     if slug:
         channel_api_data = get_kick_channel_data(slug)
@@ -450,7 +529,7 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
 
             if vid_uuid:
                 vod_data = get_kick_vod_data(vid_uuid)
-                if vod_data and vod_data.get("success"):
+                if vod_data and vod_data.get("success") and vod_data.get("duration", 0) > 0:
                     vod_data["title"] = f"{vod_data['title']} (Latest Broadcast)"
                     return vod_data
 
@@ -463,51 +542,29 @@ def get_kick_info(url_or_channel: str) -> Dict[str, Any]:
             elif not thumb:
                 thumb = (latest_v.get("livestream") or {}).get("thumbnail") or latest_v.get("thumb")
 
-            return {
-                "success": True,
-                "platform": "kick",
-                "title": latest_v.get("session_title") or f"{slug.upper()}'s Recent Broadcast",
-                "uploader": channel_api_data.get("user", {}).get("username") or slug,
-                "stream_id": str(latest_v.get("id") or stream_id),
-                "duration": dur_sec,
-                "duration_str": seconds_to_time(dur_sec),
-                "thumbnail": thumb,
-                "webpage_url": target,
-                "is_live": False,
-                "preview_url": source_url,
-                "available_resolutions": parse_m3u8_resolutions(source_url) if source_url else get_default_resolutions(),
-                "slug": slug,
-                "source_m3u8": source_url,
-                "embed_url": f"https://player.kick.com/{slug}" if slug else ""
-            }
+            if source_url and dur_sec > 0:
+                return {
+                    "success": True,
+                    "platform": "kick",
+                    "title": latest_v.get("session_title") or f"{slug.upper()}'s Recent Broadcast",
+                    "uploader": channel_api_data.get("user", {}).get("username") or slug,
+                    "stream_id": str(latest_v.get("id") or stream_id),
+                    "duration": dur_sec,
+                    "duration_str": seconds_to_time(dur_sec),
+                    "thumbnail": thumb,
+                    "webpage_url": target,
+                    "is_live": False,
+                    "preview_url": source_url,
+                    "available_resolutions": parse_m3u8_resolutions(source_url) if source_url else get_default_resolutions(),
+                    "slug": slug,
+                    "source_m3u8": source_url,
+                    "embed_url": f"https://player.kick.com/{slug}" if slug else ""
+                }
 
-    # 4. Fallback to yt-dlp metadata
-    cmd = ["yt-dlp", "--dump-json", "--no-warnings", target]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        if result.returncode == 0 and result.stdout.strip():
-            info = json.loads(result.stdout.strip().splitlines()[0])
-            duration = info.get("duration") or 0
-            preview_url = info.get("manifest_url") or info.get("url") or ""
-            return {
-                "success": True,
-                "platform": "kick",
-                "title": info.get("title") or info.get("fulltitle") or "Kick Stream",
-                "uploader": info.get("uploader") or info.get("channel") or slug or "Creator",
-                "stream_id": str(info.get("display_id") or stream_id),
-                "duration": duration,
-                "duration_str": seconds_to_time(duration) if duration else "00:00:00",
-                "thumbnail": info.get("thumbnail"),
-                "webpage_url": info.get("webpage_url") or target,
-                "is_live": info.get("is_live", False),
-                "preview_url": preview_url,
-                "available_resolutions": parse_m3u8_resolutions(preview_url) if preview_url else get_default_resolutions(),
-                "slug": slug,
-                "source_m3u8": preview_url,
-                "embed_url": f"https://player.kick.com/{slug}" if slug else ""
-            }
-    except Exception as e:
-        print(f"[StreamSlicer] yt-dlp kick metadata error: {e}")
+    # 4. Final Fallback to yt-dlp metadata
+    yt_res = extract_kick_via_ytdlp(target, slug)
+    if yt_res and yt_res.get("success"):
+        return yt_res
 
     return {
         "success": False,
