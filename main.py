@@ -18,15 +18,16 @@ from pathlib import Path
 import os
 import sys
 
-# Import core clipping engine
-from kick_engine import (
-    get_kick_info,
-    clip_kick_video,
+# Import core clipping engine (Supports both Twitch and Kick)
+from stream_engine import (
+    get_stream_info,
+    clip_stream_video,
     time_to_seconds,
-    seconds_to_time
+    seconds_to_time,
+    detect_platform
 )
 
-app = FastAPI(title="KickCutter API", description="Backend API for Kick.com Video Trimming")
+app = FastAPI(title="StreamSlicer & KickCutter API", description="Backend API for Twitch & Kick Video Trimming")
 
 # Anti-Cache Security Middleware (Ensures ZERO cross-user cache collisions)
 @app.middleware("http")
@@ -81,15 +82,16 @@ def health():
 def get_info(req: InfoRequest):
     url = req.url.strip()
     if not url:
-        raise HTTPException(status_code=400, detail="Kick URL is required.")
+        raise HTTPException(status_code=400, detail="Stream or VOD URL is required.")
     
-    info = get_kick_info(url)
+    info = get_stream_info(url)
     if not info.get("success"):
-        raise HTTPException(status_code=400, detail=info.get("error", "Failed to fetch video information."))
+        raise HTTPException(status_code=400, detail=info.get("error", "Failed to fetch stream details."))
     
     return {
         "success": True,
-        "title": info.get("title", "Kick Video"),
+        "platform": info.get("platform", detect_platform(url)),
+        "title": info.get("title", "Stream Video"),
         "uploader": info.get("uploader", "Creator"),
         "stream_id": info.get("stream_id", "N/A"),
         "duration": info.get("duration", 0),
@@ -113,7 +115,7 @@ def run_clip_job(job_id: str, url: str, start: str, end: str, quality: str):
             jobs[job_id]["message"] = message
 
     try:
-        success, msg, meta = clip_kick_video(
+        success, msg, meta = clip_stream_video(
             url=url,
             start_time=start,
             end_time=end,
@@ -148,7 +150,7 @@ def start_clip(req: ClipRequest, bg_tasks: BackgroundTasks):
     quality = req.quality.strip()
 
     if not url:
-        raise HTTPException(status_code=400, detail="Kick URL is required.")
+        raise HTTPException(status_code=400, detail="Stream or VOD URL is required.")
     
     s_sec = time_to_seconds(start)
     e_sec = time_to_seconds(end)
