@@ -52,7 +52,7 @@ class ChannelStreamsRequest(BaseModel):
     channel_url: str
     from_date: Optional[str] = None
     to_date: Optional[str] = None
-    max_results: Optional[int] = 100
+    max_results: Optional[int] = None
 
 class VideoMetadataRequest(BaseModel):
     url: str
@@ -91,7 +91,7 @@ def fetch_channel_streams_endpoint(req: ChannelStreamsRequest):
         channel_url=req.channel_url,
         from_date=req.from_date,
         to_date=req.to_date,
-        max_results=min(req.max_results or 100, 100)
+        max_results=req.max_results
     )
     return {
         "success": True,

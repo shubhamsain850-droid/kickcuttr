@@ -733,7 +733,7 @@ def parse_all_chat_messages(json_lines, video_id: str = "") -> dict:
 # CHANNEL STREAM DISCOVERY (Fast Metadata)
 # ─────────────────────────────────────────────
 
-def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_date: Optional[str] = None, max_results: int = 100) -> list[dict]:
+def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_date: Optional[str] = None, max_results: Optional[int] = None) -> list[dict]:
     """
     Fetches list of live streams from a YouTube channel tab via yt-dlp flat-playlist.
     Returns list of dicts: [{'url': ..., 'id': ..., 'date': ..., 'title': ...}]
@@ -746,18 +746,18 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
     elif not clean_url.endswith("/streams") and "/@" in clean_url:
         clean_url = clean_url.rstrip("/") + "/streams"
 
-    limit = min(max(max_results or 100, 10), 100)
     cmd = ["yt-dlp"]
     cmd.extend(get_cookie_arg())
     cmd.extend([
         "--flat-playlist",
-        "--playlist-end", str(limit),
         "--print", "%(id)s\t%(upload_date)s\t%(title)s",
         clean_url
     ])
+    if max_results and max_results > 0:
+        cmd.extend(["--playlist-end", str(max_results)])
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=45)
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=90)
         if res.returncode != 0 and not res.stdout.strip():
             return []
 
@@ -789,7 +789,7 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                     "title": title
                 })
 
-                if len(streams) >= max_results:
+                if max_results and max_results > 0 and len(streams) >= max_results:
                     break
 
         return streams
