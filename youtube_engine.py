@@ -7,6 +7,7 @@ Accurately extracts:
 - Channel live streams discovery with date range filtering
 """
 
+import base64
 import json
 import os
 import re
@@ -802,11 +803,36 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
 # DIRECT INNERTUBE REPLAY STREAMER (Ultra-Fast & In-Memory)
 # ─────────────────────────────────────────────
 
-def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_chat: bool = False) -> Optional[dict]:
+def _encode_cursor(prefix: str, payload: dict) -> str:
+    raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return prefix + base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(token: Optional[str], expected_prefix: str) -> Optional[dict]:
+    if not token or not isinstance(token, str):
+        return None
+    if not token.startswith(expected_prefix):
+        return None
+    try:
+        b64 = token[len(expected_prefix):]
+        b64 += "=" * (-len(b64) % 4)
+        obj = json.loads(base64.urlsafe_b64decode(b64.encode("ascii")).decode("utf-8"))
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+def fetch_innertube_stream_data(
+    video_id: str,
+    timeout: int = 15,
+    include_all_chat: bool = False,
+    max_messages: Optional[int] = None,
+    continuation_token: Optional[str] = None,
+) -> Optional[dict]:
     """
     Directly streams YouTube Live Chat Replay JSON chunks from YouTube's InnerTube API.
     100% In-Memory, Zero Disk Storage, Pure Stateless Processing.
-    Executes in 10-15 seconds for a multi-hour stream (15x faster than yt-dlp).
+    Supports Level B bounded scraping (`max_messages`) & exact cursor resumption (`continuation_token`).
     """
     t0 = time.time()
     session = requests.Session()
@@ -820,43 +846,118 @@ def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_ch
     # which causes YouTube to jump mid-stream and miss all earlier chats.
     # Cookies are only needed for age-restricted video comments or restricted video metadata.
 
+    limit = max(1, int(max_messages)) if (max_messages is not None and int(max_messages) > 0) else None
+    cursor = _decode_cursor(continuation_token, "cta1:")
+
     try:
-        # 1. Fetch initial watch page for API key, title, and initial continuation token
-        resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
-        if resp.status_code != 200:
-            return None
-        html = resp.text
+        api_key = cursor.get("k") if cursor else None
+        title = cursor.get("title") if cursor else None
+        cont_token = cursor.get("t") if cursor else (continuation_token if continuation_token and not cursor else None)
+        skip_in_chunk = max(0, int(cursor.get("s") or 0)) if cursor else 0
 
-        # Extract API key
-        m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-        if not m_key:
-            return None
-        api_key = m_key.group(1)
+        # 1. Fetch initial watch page for API key, title, and initial continuation token (skipped on cursor resume!)
+        if not api_key or not cont_token:
+            resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
+            if resp.status_code != 200:
+                return None
+            html = resp.text
 
-        # Extract real stream title
-        m_title = re.search(r'<title>(.*?)</title>', html)
-        title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Live Stream [{video_id}]"
+            if not api_key:
+                m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+                if not m_key:
+                    return None
+                api_key = m_key.group(1)
 
-        # Extract continuation token
-        m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
-        if not m_cont:
-            m_cont = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
-        if not m_cont:
-            m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
+            if not title:
+                m_title = re.search(r'<title>(.*?)</title>', html)
+                title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Live Stream [{video_id}]"
 
-        if not m_cont:
-            return None
-        cont_token = m_cont.group(1)
+            if not cont_token:
+                m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
+                if not m_cont:
+                    m_cont = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
+                if not m_cont:
+                    m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
+                if not m_cont:
+                    return None
+                cont_token = m_cont.group(1)
 
-        # 2. In-memory streaming of replay chunks
-        all_json_lines = []
-        seen = set()
-        chunks = 0
+        title = title or f"Live Stream [{video_id}]"
         api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}"
 
-        while cont_token and cont_token not in seen and chunks < 350:
-            seen.add(cont_token)
+        # Fast path A: Monetization Audit (/analyze-stream) - full stream events aggregation
+        if not include_all_chat:
+            all_json_lines = []
+            seen = set()
+            chunks = 0
+            while cont_token and cont_token not in seen and chunks < 1000:
+                seen.add(cont_token)
+                chunks += 1
+                payload = {
+                    "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
+                    "continuation": cont_token
+                }
+                r = session.post(api_url, json=payload, timeout=12)
+                if r.status_code != 200:
+                    break
+                data = r.json()
+                chat_cont = data.get("continuationContents", {}).get("liveChatContinuation", {})
+                for act in chat_cont.get("actions", []):
+                    all_json_lines.append(json.dumps(act))
+
+                next_token = None
+                for c in chat_cont.get("continuations", []):
+                    for k in ["liveChatReplayContinuationData", "reloadContinuationData", "timedContinuationData"]:
+                        if k in c and "continuation" in c[k]:
+                            next_token = c[k]["continuation"]
+                            break
+                    if next_token:
+                        break
+                cont_token = next_token
+
+            if not all_json_lines:
+                return None
+
+            parsed_data = parse_chat_json_lines(all_json_lines, video_id=video_id)
+            return {
+                "success": True,
+                "video_id": video_id,
+                "title": title,
+                "data": parsed_data,
+                "engine": "innertube_direct",
+                "chunks_streamed": chunks,
+                "elapsed_sec": round(time.time() - t0, 2)
+            }
+
+        # Path B: Live Chat (/fetch-chat) with Level B bounded early-stop & cursor resumption
+        collected_messages = []
+        seen_msg_ids = set()
+        top_chatter_counts = defaultdict(int)
+        unique_chatters = set()
+        sc_count = 0
+        mem_count = 0
+        jewel_count = 0
+        seen_tokens = set()
+        chunks = 0
+        has_more = False
+        next_cursor = None
+        max_chunks = 2000 if limit else 1000
+        soft_time_limit = 42.0
+
+        while cont_token and cont_token not in seen_tokens and chunks < max_chunks:
+            if chunks > 0 and (time.time() - t0) > soft_time_limit and len(collected_messages) > 0:
+                has_more = True
+                next_cursor = _encode_cursor("cta1:", {
+                    "t": cont_token,
+                    "s": skip_in_chunk,
+                    "k": api_key,
+                    "title": title,
+                })
+                break
+
+            seen_tokens.add(cont_token)
             chunks += 1
+            current_chunk_token = cont_token
 
             payload = {
                 "context": {
@@ -865,7 +966,7 @@ def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_ch
                         "clientVersion": "2.20261106.00.00"
                     }
                 },
-                "continuation": cont_token
+                "continuation": current_chunk_token
             }
 
             r = session.post(api_url, json=payload, timeout=12)
@@ -875,10 +976,7 @@ def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_ch
 
             chat_cont = data.get("continuationContents", {}).get("liveChatContinuation", {})
             actions = chat_cont.get("actions", [])
-            for act in actions:
-                all_json_lines.append(json.dumps(act))
 
-            # Retrieve next continuation token
             next_token = None
             for c in chat_cont.get("continuations", []):
                 for k in ["liveChatReplayContinuationData", "reloadContinuationData", "timedContinuationData"]:
@@ -887,21 +985,87 @@ def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_ch
                         break
                 if next_token:
                     break
+
+            chunk_parsed = parse_all_chat_messages(actions, video_id=video_id)
+            chunk_msgs = chunk_parsed.get("messages", [])
+            slice_msgs = chunk_msgs[skip_in_chunk:] if skip_in_chunk > 0 else chunk_msgs
+
+            hit_limit_mid_chunk = False
+            for offset_j, msg in enumerate(slice_msgs):
+                mid = msg.get("id")
+                if mid and mid in seen_msg_ids:
+                    continue
+                if limit is not None and len(collected_messages) >= limit:
+                    has_more = True
+                    next_cursor = _encode_cursor("cta1:", {
+                        "t": current_chunk_token,
+                        "s": skip_in_chunk + offset_j,
+                        "k": api_key,
+                        "title": title,
+                    })
+                    hit_limit_mid_chunk = True
+                    break
+
+                if mid:
+                    seen_msg_ids.add(mid)
+                msg_copy = dict(msg)
+                msg_copy["idx"] = len(collected_messages) + 1
+                collected_messages.append(msg_copy)
+
+                author = msg_copy.get("author") or "Viewer"
+                top_chatter_counts[author] += 1
+                unique_chatters.add(author)
+                ev = msg_copy.get("event_type")
+                if ev == "SUPERCHAT":
+                    sc_count += 1
+                elif ev in ("MEMBERSHIP", "GIFT"):
+                    mem_count += 1
+                elif ev == "JEWELS":
+                    jewel_count += 1
+
+            if hit_limit_mid_chunk:
+                break
+
+            skip_in_chunk = 0
+            if limit is not None and len(collected_messages) >= limit and next_token:
+                has_more = True
+                next_cursor = _encode_cursor("cta1:", {
+                    "t": next_token,
+                    "s": 0,
+                    "k": api_key,
+                    "title": title,
+                })
+                break
+
             cont_token = next_token
 
-        if not all_json_lines:
+        if not collected_messages and not continuation_token:
             return None
 
-        if include_all_chat:
-            parsed_data = parse_all_chat_messages(all_json_lines, video_id=video_id)
-        else:
-            parsed_data = parse_chat_json_lines(all_json_lines, video_id=video_id)
+        top_chatters = sorted(
+            [{"author": a, "count": c} for a, c in top_chatter_counts.items()],
+            key=lambda x: x["count"],
+            reverse=True
+        )[:25]
 
         return {
             "success": True,
             "video_id": video_id,
             "title": title,
-            "data": parsed_data,
+            "data": {
+                "stream_id": video_id,
+                "total_messages": len(collected_messages),
+                "unique_chatters": len(unique_chatters),
+                "superchats_count": sc_count,
+                "memberships_count": mem_count,
+                "jewels_count": jewel_count,
+                "events_count": sc_count + mem_count + jewel_count,
+                "top_chatters": top_chatters,
+                "elapsed_sec": round(time.time() - t0, 3),
+                "messages": collected_messages,
+            },
+            "has_more": has_more,
+            "continuation_token": next_cursor,
             "engine": "innertube_direct",
             "chunks_streamed": chunks,
             "elapsed_sec": round(time.time() - t0, 2)
@@ -916,11 +1080,16 @@ def fetch_innertube_stream_data(video_id: str, timeout: int = 15, include_all_ch
 # DIRECT VIDEO COMMENTS FETCHER (Uploaded & Saved Videos)
 # ─────────────────────────────────────────────
 
-def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
+def fetch_video_comments(
+    video_id: str,
+    max_comments: int = 300,
+    continuation_token: Optional[str] = None,
+) -> dict:
     """
     Ultra-Fast Direct InnerTube Video Comments Fetcher.
     Extracts comment text, author name, avatar, timestamp, likes, and reply counts.
     100% In-Memory, Zero Disk Storage, Pure Stateless Processing.
+    Supports high-volume extraction (>1,000) & exact cursor resumption (`continuation_token`).
     """
     t0 = time.time()
     session = requests.Session()
@@ -940,52 +1109,64 @@ def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
             except Exception:
                 pass
 
+    limit = max(1, int(max_comments or 300))
+    cursor = _decode_cursor(continuation_token, "ctm1:")
+
     try:
-        # 1. Fetch initial watch page for API key and title
-        resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=12)
-        if resp.status_code != 200:
-            return {"success": False, "error": f"Failed to fetch video page (Status {resp.status_code})"}
+        api_key = cursor.get("k") if cursor else None
+        title = cursor.get("title") if cursor else None
+        token = cursor.get("t") if cursor else (continuation_token if continuation_token and not cursor else None)
+        skip_in_page = max(0, int(cursor.get("s") or 0)) if cursor else 0
 
-        html = resp.text
-        m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-        if not m_key:
-            return {"success": False, "error": "Could not extract InnerTube API key."}
-        api_key = m_key.group(1)
+        if not api_key or not token:
+            # 1. Fetch initial watch page for API key and title
+            resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=12)
+            if resp.status_code != 200:
+                return {"success": False, "error": f"Failed to fetch video page (Status {resp.status_code})"}
 
-        m_title = re.search(r'<title>(.*?)</title>', html)
-        title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Video [{video_id}]"
+            html = resp.text
+            if not api_key:
+                m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+                if not m_key:
+                    return {"success": False, "error": "Could not extract InnerTube API key."}
+                api_key = m_key.group(1)
 
-        # 2. Initial /next request to find comments continuation token
-        payload = {
-            "context": {
-                "client": {
-                    "clientName": "WEB",
-                    "clientVersion": "2.20261106.00.00"
+            if not title:
+                m_title = re.search(r'<title>(.*?)</title>', html)
+                title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Video [{video_id}]"
+
+            if not token:
+                # 2. Initial /next request to find comments continuation token
+                payload = {
+                    "context": {
+                        "client": {
+                            "clientName": "WEB",
+                            "clientVersion": "2.20261106.00.00"
+                        }
+                    },
+                    "videoId": video_id
                 }
-            },
-            "videoId": video_id
-        }
-        r = session.post(f"https://www.youtube.com/youtubei/v1/next?key={api_key}", json=payload, timeout=12)
-        if r.status_code != 200:
-            return {"success": False, "error": "Initial next request failed."}
-        data = r.json()
+                r = session.post(f"https://www.youtube.com/youtubei/v1/next?key={api_key}", json=payload, timeout=12)
+                if r.status_code != 200:
+                    return {"success": False, "error": "Initial next request failed."}
+                data = r.json()
 
-        # Locate comments token in engagementPanels or twoColumnWatchNextResults
-        token = None
-        for p in data.get("engagementPanels", []):
-            panel = p.get("engagementPanelSectionListRenderer", {})
-            if panel.get("panelIdentifier") == "engagement-panel-comments-section":
-                s = json.dumps(panel)
-                m = re.search(r'"token":\s*"([^"]+)"', s)
-                if m:
-                    token = m.group(1)
-                    break
+                for p in data.get("engagementPanels", []):
+                    panel = p.get("engagementPanelSectionListRenderer", {})
+                    if panel.get("panelIdentifier") == "engagement-panel-comments-section":
+                        s = json.dumps(panel)
+                        m = re.search(r'"token":\s*"([^"]+)"', s)
+                        if m:
+                            token = m.group(1)
+                            break
 
-        if not token:
-            s = json.dumps(data)
-            m = re.search(r'"continuation":\s*"([a-zA-Z0-9_\-=]+)"', s)
-            if m:
-                token = m.group(1)
+                if not token:
+                    s = json.dumps(data)
+                    m = re.search(r'"continuation":\s*"([a-zA-Z0-9_\-=]+)"', s)
+                    if m:
+                        token = m.group(1)
+
+        title = title or f"Video [{video_id}]"
 
         if not token:
             return {
@@ -995,18 +1176,38 @@ def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
                 "total_comments": 0,
                 "unique_commenters": 0,
                 "total_likes": 0,
+                "has_more": False,
+                "continuation_token": None,
                 "comments": [],
                 "message": "Comments are disabled or empty for this video."
             }
 
         comments = []
         seen_ids = set()
+        seen_tokens = set()
         unique_authors = set()
         total_likes = 0
         pages = 0
+        has_more = False
+        next_cursor = None
+        max_pages = min(2500, max(60, (limit // 12) + 25))
+        soft_time_limit = 42.0
 
-        while token and len(comments) < max_comments and pages < 35:
+        while token and token not in seen_tokens and len(comments) < limit and pages < max_pages:
+            if pages > 0 and (time.time() - t0) > soft_time_limit and len(comments) > 0:
+                has_more = True
+                next_cursor = _encode_cursor("ctm1:", {
+                    "t": token,
+                    "s": skip_in_page,
+                    "k": api_key,
+                    "title": title,
+                })
+                break
+
+            seen_tokens.add(token)
             pages += 1
+            current_page_token = token
+
             c_payload = {
                 "context": {
                     "client": {
@@ -1014,24 +1215,41 @@ def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
                         "clientVersion": "2.20261106.00.00"
                     }
                 },
-                "continuation": token
+                "continuation": current_page_token
             }
             r_c = session.post(f"https://www.youtube.com/youtubei/v1/next?key={api_key}", json=c_payload, timeout=12)
             if r_c.status_code != 200:
                 break
             c_data = r_c.json()
 
+            # Next token from endpoints (extracted upfront so cursor resumes cleanly on boundary!)
+            next_token = None
+            endpoints = c_data.get("onResponseReceivedEndpoints", [])
+            for ep in endpoints:
+                for k in ["reloadContinuationItemsCommand", "appendContinuationItemsAction"]:
+                    if k in ep:
+                        for ci in ep[k].get("continuationItems", []):
+                            if "continuationItemRenderer" in ci:
+                                cir = ci["continuationItemRenderer"]
+                                cmd = cir.get("continuationEndpoint", {}).get("continuationCommand", {})
+                                if "token" in cmd:
+                                    next_token = cmd["token"]
+                                elif "continuation" in cir.get("continuationEndpoint", {}):
+                                    next_token = cir["continuationEndpoint"]["continuation"]
+
             # Extract from frameworkUpdates mutations (modern YouTube format)
             mutations = c_data.get("frameworkUpdates", {}).get("entityBatchUpdate", {}).get("mutations", [])
+            page_comments = []
+            page_seen = set()
             for mut in mutations:
                 p_mut = mut.get("payload", {})
                 if "commentEntityPayload" in p_mut:
                     cep = p_mut["commentEntityPayload"]
                     props = cep.get("properties", {})
-                    cid = props.get("commentId") or f"c_{len(comments)+1}"
-                    if cid in seen_ids:
+                    cid = props.get("commentId") or f"p{pages}_c_{len(page_comments)+1}"
+                    if cid in page_seen:
                         continue
-                    seen_ids.add(cid)
+                    page_seen.add(cid)
 
                     author_obj = cep.get("author", {})
                     author = author_obj.get("displayName") or props.get("authorButtonA11y") or "Commenter"
@@ -1062,11 +1280,7 @@ def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
 
                     is_hearted = bool(toolbar.get("heartActiveTooltip"))
 
-                    unique_authors.add(author)
-                    total_likes += likes_num
-
-                    comments.append({
-                        "idx": len(comments) + 1,
+                    page_comments.append({
                         "id": cid,
                         "author": author,
                         "author_id": author_id,
@@ -1081,23 +1295,45 @@ def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
                         "video_id": video_id
                     })
 
-                    if len(comments) >= max_comments:
-                        break
+            slice_comments = page_comments[skip_in_page:] if skip_in_page > 0 else page_comments
+            hit_limit_mid_page = False
+            for offset_j, item_c in enumerate(slice_comments):
+                cid = item_c.get("id")
+                if cid and cid in seen_ids:
+                    continue
+                if len(comments) >= limit:
+                    has_more = True
+                    next_cursor = _encode_cursor("ctm1:", {
+                        "t": current_page_token,
+                        "s": skip_in_page + offset_j,
+                        "k": api_key,
+                        "title": title,
+                    })
+                    hit_limit_mid_page = True
+                    break
 
-            # Next token from endpoints
-            next_token = None
-            endpoints = c_data.get("onResponseReceivedEndpoints", [])
-            for ep in endpoints:
-                for k in ["reloadContinuationItemsCommand", "appendContinuationItemsAction"]:
-                    if k in ep:
-                        for ci in ep[k].get("continuationItems", []):
-                            if "continuationItemRenderer" in ci:
-                                cir = ci["continuationItemRenderer"]
-                                cmd = cir.get("continuationEndpoint", {}).get("continuationCommand", {})
-                                if "token" in cmd:
-                                    next_token = cmd["token"]
-                                elif "continuation" in cir.get("continuationEndpoint", {}):
-                                    next_token = cir["continuationEndpoint"]["continuation"]
+                if cid:
+                    seen_ids.add(cid)
+                item_copy = dict(item_c)
+                item_copy["idx"] = len(comments) + 1
+                unique_authors.add(item_copy["author"])
+                total_likes += item_copy["likes"]
+                comments.append(item_copy)
+
+            if hit_limit_mid_page:
+                break
+
+            skip_in_page = 0
+            if len(comments) >= limit and next_token:
+                has_more = True
+                next_cursor = _encode_cursor("ctm1:", {
+                    "t": next_token,
+                    "s": 0,
+                    "k": api_key,
+                    "title": title,
+                })
+                break
+
             token = next_token
 
         return {
@@ -1107,6 +1343,8 @@ def fetch_video_comments(video_id: str, max_comments: int = 300) -> dict:
             "total_comments": len(comments),
             "unique_commenters": len(unique_authors),
             "total_likes": total_likes,
+            "has_more": has_more,
+            "continuation_token": next_cursor,
             "pages_fetched": pages,
             "elapsed_sec": round(time.time() - t0, 2),
             "comments": comments

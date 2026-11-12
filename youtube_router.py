@@ -43,10 +43,13 @@ class AnalyzeStreamRequest(BaseModel):
 
 class FetchChatRequest(BaseModel):
     url: str
+    max_messages: Optional[int] = None
+    continuation_token: Optional[str] = None
 
 class FetchCommentsRequest(BaseModel):
     url: str
     max_comments: Optional[int] = 300
+    continuation_token: Optional[str] = None
 
 class ChannelStreamsRequest(BaseModel):
     channel_url: str
@@ -76,7 +79,7 @@ def yt_analytics_health():
     return {
         "status": "healthy",
         "service": "YouTube Stream Analytics Engine",
-        "version": "1.2.0"
+        "version": "1.3.0"
     }
 
 @router.post("/channel-streams")
@@ -218,15 +221,36 @@ def fetch_chat_endpoint(req: FetchChatRequest):
         raise HTTPException(status_code=400, detail="Invalid YouTube URL or Video ID.")
 
     # 1. Primary Engine: Ultra-Fast Direct InnerTube Streaming (100% in-memory, zero disk)
+    max_msgs = min(max(1, req.max_messages), 1000000) if req.max_messages and req.max_messages > 0 else None
     try:
-        res = fetch_innertube_stream_data(vid, include_all_chat=True)
+        res = fetch_innertube_stream_data(
+            vid,
+            include_all_chat=True,
+            max_messages=max_msgs,
+            continuation_token=req.continuation_token,
+        )
         if res and res.get("success"):
             return res
     except Exception as e:
         print(f"[Fetch-Chat InnerTube Error] Video {vid}: {e}. Switching to frozen yt-dlp fallback...")
 
+    if req.continuation_token:
+        return {"success": False, "error": "Continuation cursor expired or unavailable."}
+
     # 2. Frozen Fallback Engine
-    return frozen_ytdlp_analyze_stream(vid, include_all_chat=True)
+    fallback_res = frozen_ytdlp_analyze_stream(vid, include_all_chat=True)
+    if (
+        max_msgs
+        and isinstance(fallback_res, dict)
+        and fallback_res.get("success")
+        and isinstance(fallback_res.get("data"), dict)
+    ):
+        msgs = fallback_res["data"].get("messages") or []
+        if len(msgs) > max_msgs:
+            fallback_res["data"]["messages"] = msgs[:max_msgs]
+            fallback_res["data"]["total_messages"] = max_msgs
+            fallback_res["has_more"] = True
+    return fallback_res
 
 
 @router.post("/fetch-comments")
@@ -243,8 +267,8 @@ def fetch_comments_endpoint(req: FetchCommentsRequest):
     if not vid:
         raise HTTPException(status_code=400, detail="Invalid YouTube URL or Video ID.")
 
-    max_c = min(req.max_comments or 300, 1000)
-    return fetch_video_comments(vid, max_comments=max_c)
+    max_c = min(max(1, req.max_comments or 300), 100000)
+    return fetch_video_comments(vid, max_comments=max_c, continuation_token=req.continuation_token)
 
 
 @router.post("/upload-json")
