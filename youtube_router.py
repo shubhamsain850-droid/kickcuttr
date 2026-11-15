@@ -151,6 +151,27 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, in
         found_files = list(Path(tmp_dir).glob(f"*{vid}*.json"))
         
         if not found_files:
+            err_lower = (p.stderr or "").lower() + " " + (p.stdout or "").lower()
+            if "members" in err_lower and ("join this channel" in err_lower or "available to this channel's members" in err_lower or "members-only" in err_lower or "sponsors" in err_lower or "level:" in err_lower):
+                return {
+                    "success": False,
+                    "error": "MEMBERS_ONLY",
+                    "is_members_only": True,
+                    "title": stream_title,
+                    "message": f"Members-Only stream ('{stream_title}') - requires channel membership.",
+                    "video_id": vid,
+                    "engine": "frozen_ytdlp_fallback"
+                }
+            elif "private video" in err_lower or "this video is private" in err_lower or "video is private" in err_lower:
+                return {
+                    "success": False,
+                    "error": "PRIVATE_STREAM",
+                    "is_private": True,
+                    "title": stream_title,
+                    "message": f"Private stream ('{stream_title}') - restricted access.",
+                    "video_id": vid,
+                    "engine": "frozen_ytdlp_fallback"
+                }
             return {
                 "success": False,
                 "error": "NO_CHAT_AVAILABLE",
@@ -198,6 +219,8 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
         innertube_res = fetch_innertube_stream_data(vid, include_all_chat=False)
         if innertube_res and innertube_res.get("success"):
             return innertube_res
+        if innertube_res and innertube_res.get("error") in ("MEMBERS_ONLY", "PRIVATE_STREAM"):
+            return innertube_res
     except Exception as e:
         print(f"[InnerTube Engine Error] Video {vid}: {e}. Switching to frozen yt-dlp fallback...")
 
@@ -230,6 +253,8 @@ def fetch_chat_endpoint(req: FetchChatRequest):
             continuation_token=req.continuation_token,
         )
         if res and res.get("success"):
+            return res
+        if res and res.get("error") in ("MEMBERS_ONLY", "PRIVATE_STREAM"):
             return res
     except Exception as e:
         print(f"[Fetch-Chat InnerTube Error] Video {vid}: {e}. Switching to frozen yt-dlp fallback...")

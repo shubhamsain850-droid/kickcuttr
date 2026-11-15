@@ -862,11 +862,17 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                                 break
 
                             display_date = date_str or pub_text or "Recent"
+                            raw_item_str = json.dumps(it).lower()
+                            is_mem = "badge_members_only" in raw_item_str or "members only" in raw_item_str or "sponsorship" in raw_item_str
+                            is_pvt = "private" in raw_item_str and not is_mem
                             matched.append({
                                 "id": vid,
                                 "url": f"https://www.youtube.com/watch?v={vid}",
                                 "date": display_date,
-                                "title": title or "YouTube Live Stream"
+                                "title": title or "YouTube Live Stream",
+                                "is_members_only": is_mem,
+                                "is_private": is_pvt,
+                                "access": "members_only" if is_mem else ("private" if is_pvt else "public")
                             })
 
                             if max_results and max_results > 0 and len(matched) >= max_results:
@@ -1042,6 +1048,29 @@ def fetch_innertube_stream_data(
                 if not m_cont:
                     m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
                 if not m_cont:
+                    m_play = re.search(r'"playabilityStatus":\s*({.+?})\s*,\s*"', html)
+                    play_text = m_play.group(1).lower() if m_play else ""
+                    h_lower = html.lower()
+                    if ("members" in play_text and ("join this channel" in play_text or "level:" in play_text or "sponsors_only_video" in play_text or "members-only" in play_text)) or "sponsors_only_video" in h_lower or "badge_members_only" in h_lower or "join this channel to get access to members-only content" in h_lower:
+                        return {
+                            "success": False,
+                            "error": "MEMBERS_ONLY",
+                            "is_members_only": True,
+                            "title": title,
+                            "message": f"Members-Only stream ('{title}') - requires channel membership.",
+                            "video_id": video_id,
+                            "engine": "innertube"
+                        }
+                    elif ("private" in play_text and ("this video is private" in play_text or "private video" in play_text)) or "this video is private" in h_lower or "private video" in h_lower:
+                        return {
+                            "success": False,
+                            "error": "PRIVATE_STREAM",
+                            "is_private": True,
+                            "title": title,
+                            "message": f"Private stream ('{title}') - restricted access.",
+                            "video_id": video_id,
+                            "engine": "innertube"
+                        }
                     return None
                 cont_token = m_cont.group(1)
 
