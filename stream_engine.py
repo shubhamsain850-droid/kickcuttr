@@ -601,7 +601,7 @@ def clip_stream_video(
     url: str,
     start_time: str,
     end_time: str,
-    quality: str = "720p",
+    quality: str = "best",
     output_dir: str = "/tmp/streamslicer",
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
@@ -637,24 +637,32 @@ def clip_stream_video(
             if resolved_info.get("success") and resolved_info.get("source_m3u8"):
                 target_media = resolved_info["source_m3u8"]
 
-    # Format quality selector for yt-dlp
-    q_lower = quality.lower().strip()
-    if q_lower == "best":
-        format_selector = "best"
+    # Format quality selector for yt-dlp - prioritizes crisp source streams and highest bitrates
+    q_lower = (quality or "best").lower().strip()
+    if q_lower in ["best", "source", "original"]:
+        format_selector = "1080p60__source_/chunked/bestvideo+bestaudio/best"
     elif "1080" in q_lower:
-        format_selector = "best[height<=1080]/best"
+        format_selector = "1080p60__source_/1080p60/1080p/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
     elif "720" in q_lower:
-        format_selector = "best[height<=720]/best"
+        format_selector = "720p60/720p/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
     elif "480" in q_lower:
-        format_selector = "best[height<=480]/best"
+        format_selector = "480p/bestvideo[height<=480]+bestaudio/best[height<=480]/best"
     elif "360" in q_lower:
-        format_selector = "best[height<=360]/best"
+        format_selector = "360p/bestvideo[height<=360]+bestaudio/best[height<=360]/best"
     elif "160" in q_lower:
-        format_selector = "best[height<=160]/best"
+        format_selector = "160p/bestvideo[height<=160]+bestaudio/best[height<=160]/best"
     else:
-        format_selector = f"{quality}/best"
+        format_selector = f"{quality}/bestvideo+bestaudio/best"
 
     section_arg = f"*{seconds_to_time(start_sec)}-{seconds_to_time(end_sec)}"
+
+    extra_headers = []
+    if platform == "kick" or "kick" in target_media.lower() or "live-video.net" in target_media.lower():
+        extra_headers = [
+            "--add-header", "Referer:https://kick.com/",
+            "--add-header", "Origin:https://kick.com",
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ]
 
     cmd = [
         "yt-dlp",
@@ -664,8 +672,7 @@ def clip_stream_video(
         "--no-playlist",
         "--merge-output-format", "mp4",
         "--newline",
-        target_media
-    ]
+    ] + extra_headers + [target_media]
 
     if progress_callback:
         progress_callback(8.0, f"Connecting to {platform.capitalize() if platform != 'unknown' else 'stream'} servers...")

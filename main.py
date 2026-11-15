@@ -68,7 +68,7 @@ class ClipRequest(BaseModel):
     url: str
     start: str
     end: str
-    quality: str = "720p"
+    quality: str = "best"
 
 @app.api_route("/", methods=["GET", "HEAD"])
 def root():
