@@ -133,6 +133,7 @@ def run_clip_job(job_id: str, url: str, start: str, end: str, quality: str):
             jobs[job_id]["filename"] = filename
             jobs[job_id]["size_mb"] = meta.get("size_mb")
             jobs[job_id]["duration_str"] = meta.get("duration_str")
+            jobs[job_id]["resolution"] = meta.get("resolution") or quality
             jobs[job_id]["download_url"] = f"/download/{filename}"
         else:
             jobs[job_id]["status"] = "failed"
@@ -228,5 +229,10 @@ def download_clip(filename: str):
         path=str(file_path),
         media_type="video/mp4",
         filename=safe_name,
-        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'}
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
     )
