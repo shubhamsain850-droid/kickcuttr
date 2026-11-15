@@ -399,14 +399,21 @@ def extract_kick_via_ytdlp(target_url: str, slug: str = "") -> Dict[str, Any]:
             data = json.loads(proc.stdout.strip().splitlines()[0])
             duration = int(data.get("duration") or 0)
             formats = data.get("formats", [])
-            preview_url = data.get("manifest_url") or data.get("url") or ""
+            manifest_url = data.get("manifest_url") or ""
+            source_m3u8 = manifest_url or data.get("url") or ""
+            preview_url = ""
 
-            # Check formats for clean .m3u8
-            for f in formats:
+            # Prioritize crisp master/highest-resolution streams, never lock to 160p
+            for f in sorted(formats, key=lambda x: x.get("height") or 0, reverse=True):
                 f_url = f.get("url") or ""
-                if ".m3u8" in f_url and "d26yk4zpyhjeeq.cloudfront.net" in f_url:
-                    preview_url = f_url
-                    break
+                if ".m3u8" in f_url:
+                    if not source_m3u8:
+                        source_m3u8 = f_url
+                    if not preview_url and f.get("height") and 360 <= f.get("height") <= 720:
+                        preview_url = f_url
+
+            if not preview_url:
+                preview_url = source_m3u8
 
             available_resolutions = [
                 {"id": "best", "height": 9999, "label": "⚡ Best Available Source (Original)", "format_id": "best"}
@@ -457,7 +464,7 @@ def extract_kick_via_ytdlp(target_url: str, slug: str = "") -> Dict[str, Any]:
                 "preview_url": preview_url,
                 "available_resolutions": available_resolutions,
                 "slug": clean_slug,
-                "source_m3u8": preview_url,
+                "source_m3u8": source_m3u8,
                 "embed_url": f"https://player.kick.com/{clean_slug}" if clean_slug else ""
             }
     except Exception as e:
@@ -641,9 +648,25 @@ def clip_stream_video(
     q_lower = (quality or "best").lower().strip()
 
     # Intelligent Kick / HLS variant playlist resolution:
-    # If target is an HLS master playlist, resolve the exact sub-playlist matching requested resolution
+    # If target is an HLS master playlist or Kick CloudFront VOD, resolve the exact sub-playlist matching requested resolution
     is_variant_stream = False
-    if ".m3u8" in target_media and "master.m3u8" in target_media:
+    
+    # 1. Kick CloudFront single-stream index rewrite (0=1080p, 1=720p, 2=480p, 3=360p, 4=160p)
+    if "/production-kick-vod/" in target_media and re.search(r'/\d+\.m3u8', target_media):
+        target_idx = 0 if ("1080" in q_lower or q_lower in ["best", "source", "original"]) else (
+            1 if "720" in q_lower else (
+                2 if "480" in q_lower else (
+                    3 if "360" in q_lower else (
+                        4 if "160" in q_lower else 0
+                    )
+                )
+            )
+        )
+        target_media = re.sub(r'/\d+\.m3u8', f'/{target_idx}.m3u8', target_media)
+        is_variant_stream = True
+
+    # 2. Master or Manifest HLS playlist resolution
+    elif ".m3u8" in target_media and ("master.m3u8" in target_media or "manifest.m3u8" in target_media or "/manifest/" in target_media):
         try:
             req_h = 1080 if ("1080" in q_lower or q_lower in ["best", "source", "original"]) else (
                 720 if "720" in q_lower else (
@@ -658,7 +681,7 @@ def clip_stream_video(
                 req = urllib.request.Request(target_media, headers={
                     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
                 })
-                with urllib.request.urlopen(req, timeout=5) as resp:
+                with urllib.request.urlopen(req, timeout=6) as resp:
                     m_content = resp.read().decode("utf-8", errors="ignore")
                 p_matches = re.findall(r'#EXT-X-STREAM-INF:[^\n]*RESOLUTION=(\d+)x(\d+)[^\n]*\n([^\r\n]+)', m_content)
                 chosen_uri = None
