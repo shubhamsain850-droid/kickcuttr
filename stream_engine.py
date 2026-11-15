@@ -856,12 +856,32 @@ def clip_stream_video(
             if progress_callback:
                 progress_callback(100.0, "100% Complete! Ready for download.")
             size_mb = round(resolved_file.stat().st_size / (1024 * 1024), 2)
+            actual_res = ""
+            try:
+                cmd_p = ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=s=x:p=0", str(resolved_file)]
+                p_run = subprocess.run(cmd_p, capture_output=True, text=True, timeout=5)
+                if p_run.returncode == 0 and p_run.stdout.strip():
+                    actual_res = p_run.stdout.strip()
+            except Exception:
+                pass
+            if not actual_res:
+                actual_res = "1920x1080 (Full HD)" if "1080" in q_lower or q_lower in ["best", "source"] else (
+                    "1280x720 (HD)" if "720" in q_lower else (
+                        "852x480 (SD)" if "480" in q_lower else (
+                            "640x360" if "360" in q_lower else (
+                                "284x160" if "160" in q_lower else q_lower.upper()
+                            )
+                        )
+                    )
+                )
+
             meta = {
                 "file_path": str(resolved_file),
                 "filename": resolved_file.name,
                 "size_mb": size_mb,
                 "duration": clip_duration,
                 "duration_str": seconds_to_time(clip_duration),
+                "resolution": actual_res,
                 "platform": platform
             }
             return True, f"Successfully created clip ({size_mb} MB)!", meta

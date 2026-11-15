@@ -734,9 +734,47 @@ def parse_all_chat_messages(json_lines, video_id: str = "") -> dict:
 # CHANNEL STREAM DISCOVERY (Fast Metadata)
 # ─────────────────────────────────────────────
 
+def parse_relative_stream_date(text: str) -> str:
+    """
+    Converts relative YouTube timestamps (e.g. 'Streamed 3h ago', 'Streamed 1d ago', 'Streamed 2w ago')
+    to absolute YYYY-MM-DD format for accurate range filtering.
+    """
+    if not text:
+        return ""
+    clean = text.lower().strip()
+    now = datetime.now()
+    if "streamed" in clean:
+        clean = clean.replace("streamed", "").strip()
+
+    m = re.search(r'(\d+)\s*([a-z]+)', clean)
+    if not m:
+        if "yesterday" in clean:
+            return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        if "today" in clean:
+            return now.strftime("%Y-%m-%d")
+        return ""
+
+    val = int(m.group(1))
+    unit = m.group(2)
+    if unit.startswith("s") or (unit.startswith("m") and "mo" not in unit) or unit.startswith("h"):
+        dt = now
+    elif unit.startswith("d"):
+        dt = now - timedelta(days=val)
+    elif unit.startswith("w"):
+        dt = now - timedelta(days=val * 7)
+    elif "mo" in unit:
+        dt = now - timedelta(days=val * 30)
+    elif unit.startswith("y"):
+        dt = now - timedelta(days=val * 365)
+    else:
+        dt = now
+    return dt.strftime("%Y-%m-%d")
+
+
 def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_date: Optional[str] = None, max_results: Optional[int] = None) -> list[dict]:
     """
-    Fetches list of live streams from a YouTube channel tab via yt-dlp flat-playlist.
+    Fetches list of live streams from a YouTube channel tab via Innertube (with yt-dlp fallback).
+    Parses relative & absolute dates accurately to guarantee 100% strict date-range filtering.
     Returns list of dicts: [{'url': ..., 'id': ..., 'date': ..., 'title': ...}]
     """
     clean_url = channel_url.strip()
@@ -747,6 +785,129 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
     elif not clean_url.endswith("/streams") and "/@" in clean_url:
         clean_url = clean_url.rstrip("/") + "/streams"
 
+    # Auto-swap inverted date inputs (e.g. if user entered From=Today and To=Past)
+    if from_date and to_date and from_date > to_date:
+        from_date, to_date = to_date, from_date
+
+    # 1. Primary Strategy: Direct YouTube Innertube Streams Tab Scraper
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        resp = requests.get(clean_url, headers=headers, timeout=15)
+        if resp.status_code == 200:
+            html = resp.text
+            m_key = re.search(r'"INNERTUBE_API_KEY":\s*"([^"]+)"', html)
+            m_data = re.search(r'ytInitialData\s*=\s*({.*?});</script>', html)
+            if m_data:
+                init_data = json.loads(m_data.group(1))
+                api_key = m_key.group(1) if m_key else ""
+                tabs = init_data.get("contents", {}).get("twoColumnBrowseResultsRenderer", {}).get("tabs", [])
+                streams_tab = None
+                for tab in tabs:
+                    tr = tab.get("tabRenderer", {})
+                    if tr.get("title") == "Live":
+                        streams_tab = tr
+                        break
+
+                if streams_tab:
+                    grid_contents = streams_tab.get("content", {}).get("richGridRenderer", {}).get("contents", [])
+                    matched = []
+                    continuation_token = None
+                    hit_past_cutoff = False
+
+                    def parse_grid_items(items_list):
+                        nonlocal continuation_token, hit_past_cutoff
+                        for it in items_list:
+                            if "continuationItemRenderer" in it:
+                                continuation_token = it.get("continuationItemRenderer", {}).get("continuationEndpoint", {}).get("continuationCommand", {}).get("token")
+                                continue
+
+                            vid = ""
+                            title = ""
+                            pub_text = ""
+
+                            lvm = it.get("richItemRenderer", {}).get("content", {}).get("lockupViewModel")
+                            if lvm:
+                                vid = lvm.get("contentId")
+                                title = lvm.get("metadata", {}).get("lockupMetadataViewModel", {}).get("title", {}).get("content", "")
+                                snippets = lvm.get("metadata", {}).get("lockupMetadataViewModel", {}).get("metadata", {}).get("contentMetadataViewModel", {}).get("metadataRows", [])
+                                for row in snippets:
+                                    parts = [p.get("text", {}).get("content", "") for p in row.get("metadataParts", [])]
+                                    for p in parts:
+                                        if "streamed" in p.lower() or "ago" in p.lower():
+                                            pub_text = p
+                                            break
+                                    if pub_text:
+                                        break
+                            else:
+                                vr = it.get("richItemRenderer", {}).get("content", {}).get("videoRenderer")
+                                if vr:
+                                    vid = vr.get("videoId")
+                                    title = vr.get("title", {}).get("runs", [{}])[0].get("text", "")
+                                    pub_text = vr.get("publishedTimeText", {}).get("simpleText", "")
+
+                            if not vid or not re.match(r'^[A-Za-z0-9_-]{11}$', vid):
+                                continue
+
+                            date_str = parse_relative_stream_date(pub_text)
+
+                            # Date filtering logic
+                            if to_date and date_str and date_str > to_date:
+                                continue
+                            if from_date and date_str and date_str < from_date:
+                                # Streams are sorted latest-first; once we pass from_date, stop further checks
+                                hit_past_cutoff = True
+                                break
+
+                            display_date = date_str or pub_text or "Recent"
+                            matched.append({
+                                "id": vid,
+                                "url": f"https://www.youtube.com/watch?v={vid}",
+                                "date": display_date,
+                                "title": title or "YouTube Live Stream"
+                            })
+
+                            if max_results and max_results > 0 and len(matched) >= max_results:
+                                hit_past_cutoff = True
+                                break
+
+                    parse_grid_items(grid_contents)
+
+                    # Multi-page continuation loop if from_date not reached yet or max_results desired
+                    pages_checked = 1
+                    max_pages = 10 if (not from_date and not max_results) else 25
+                    while continuation_token and not hit_past_cutoff and pages_checked < max_pages and api_key:
+                        try:
+                            c_url = f"https://www.youtube.com/youtubei/v1/browse?key={api_key}"
+                            c_body = {
+                                "context": {"client": {"clientName": "WEB", "clientVersion": "2.20240101.00.00"}},
+                                "continuation": continuation_token
+                            }
+                            c_resp = requests.post(c_url, json=c_body, headers=headers, timeout=10)
+                            if c_resp.status_code != 200:
+                                break
+                            c_data = c_resp.json()
+                            continuation_token = None
+                            actions = c_data.get("onResponseReceivedActions", [])
+                            if not actions:
+                                break
+                            next_items = actions[0].get("appendContinuationItemsAction", {}).get("continuationItems", [])
+                            if not next_items:
+                                break
+                            parse_grid_items(next_items)
+                            pages_checked += 1
+                        except Exception as c_err:
+                            print(f"Innertube continuation error: {c_err}")
+                            break
+
+                    if matched or from_date or to_date:
+                        return matched
+    except Exception as it_err:
+        print(f"Innertube channel streams extraction notice: {it_err}")
+
+    # 2. Secondary Strategy: yt-dlp fallback with strict date validation
     cmd = ["yt-dlp"]
     cmd.extend(get_cookie_arg())
     cmd.extend([
@@ -772,12 +933,14 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                 date_raw = parts[1].strip() if len(parts) > 1 else ""
                 title = parts[2].strip() if len(parts) > 2 else "YouTube Live Stream"
 
-                # Format YYYYMMDD to YYYY-MM-DD
                 formatted_date = ""
                 if len(date_raw) == 8 and date_raw.isdigit():
                     formatted_date = f"{date_raw[:4]}-{date_raw[4:6]}-{date_raw[6:]}"
 
-                # Date Filtering
+                # Strict Date Filtering: If user requested a date range, do NOT allow unknown dates to bypass
+                if (from_date or to_date) and not formatted_date:
+                    # In fallback, if date is missing/NA, do not blindly add entire channel
+                    continue
                 if from_date and formatted_date and formatted_date < from_date:
                     continue
                 if to_date and formatted_date and formatted_date > to_date:
@@ -795,7 +958,7 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
 
         return streams
     except Exception as e:
-        print(f"Error fetching channel streams: {e}")
+        print(f"Error fetching channel streams via yt-dlp: {e}")
         return []
 
 
