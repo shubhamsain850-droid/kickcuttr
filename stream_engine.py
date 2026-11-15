@@ -16,6 +16,7 @@ import json
 import time
 import datetime
 import urllib.request
+import urllib.parse
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Tuple, Callable, Optional, List
@@ -307,10 +308,9 @@ def extract_slug_from_url(url: str) -> str:
     m = re.search(r'kick\.com/([a-zA-Z0-9_\-]+)', url, re.IGNORECASE)
     if m:
         slug = m.group(1).lower()
-        if slug not in ['video', 'categories', 'search', 'following', 'clips']:
+        if slug not in ['video', 'videos', 'categories', 'search', 'following', 'clips']:
             return slug
-    clean = re.sub(r'[^a-zA-Z0-9_\-]', '', url)
-    return clean.lower()
+    return ""
 
 
 def get_kick_vod_data(video_id: str) -> Dict[str, Any]:
@@ -324,8 +324,8 @@ def get_kick_vod_data(video_id: str) -> Dict[str, Any]:
             data = json.loads(response.read().decode("utf-8"))
             session = data.get("livestream", {})
             channel = session.get("channel", {})
-            source_url = data.get("source") or ""
-            dur_ms = data.get("duration") or 0
+            source_url = data.get("source") or session.get("source") or ""
+            dur_ms = data.get("duration") or session.get("duration") or 0
             dur_sec = int(dur_ms / 1000) if dur_ms > 10000 else int(dur_ms)
             
             thumb = data.get("thumb") or (data.get("livestream") or {}).get("thumbnail") or data.get("thumbnail")
@@ -639,20 +639,63 @@ def clip_stream_video(
 
     # Format quality selector for yt-dlp - prioritizes crisp source streams and highest bitrates
     q_lower = (quality or "best").lower().strip()
-    if q_lower in ["best", "source", "original"]:
-        format_selector = "1080p60__source_/chunked/bestvideo+bestaudio/best"
+
+    # Intelligent Kick / HLS variant playlist resolution:
+    # If target is an HLS master playlist, resolve the exact sub-playlist matching requested resolution
+    is_variant_stream = False
+    if ".m3u8" in target_media and "master.m3u8" in target_media:
+        try:
+            req_h = 1080 if ("1080" in q_lower or q_lower in ["best", "source", "original"]) else (
+                720 if "720" in q_lower else (
+                    480 if "480" in q_lower else (
+                        360 if "360" in q_lower else (
+                            160 if "160" in q_lower else None
+                        )
+                    )
+                )
+            )
+            if req_h:
+                req = urllib.request.Request(target_media, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                })
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    m_content = resp.read().decode("utf-8", errors="ignore")
+                p_matches = re.findall(r'#EXT-X-STREAM-INF:[^\n]*RESOLUTION=(\d+)x(\d+)[^\n]*\n([^\r\n]+)', m_content)
+                chosen_uri = None
+                for w_str, h_str, u_str in p_matches:
+                    if int(h_str) == req_h:
+                        chosen_uri = u_str.strip()
+                        break
+                if not chosen_uri and p_matches:
+                    sorted_p = sorted(p_matches, key=lambda x: int(x[1]), reverse=True)
+                    for w_str, h_str, u_str in sorted_p:
+                        if int(h_str) <= req_h:
+                            chosen_uri = u_str.strip()
+                            break
+                if chosen_uri:
+                    target_media = urllib.parse.urljoin(target_media, chosen_uri)
+                    is_variant_stream = True
+        except Exception as e:
+            print(f"[StreamSlicer] Master playlist variant resolve notice: {e}")
+
+    # Format quality selector for yt-dlp
+    if is_variant_stream:
+        # Direct variant playlist already isolates the requested stream
+        format_selector = "best"
+    elif q_lower in ["best", "source", "original"]:
+        format_selector = "1080p60__source_/1080p60/chunked/best"
     elif "1080" in q_lower:
-        format_selector = "1080p60__source_/1080p60/1080p/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+        format_selector = "1080p60__source_/1080p60/1080p/best[height<=1080]/best"
     elif "720" in q_lower:
-        format_selector = "720p60/720p/bestvideo[height<=720]+bestaudio/best[height<=720]/best"
+        format_selector = "720p60/720p30/720p/best[height<=720]"
     elif "480" in q_lower:
-        format_selector = "480p/bestvideo[height<=480]+bestaudio/best[height<=480]/best"
+        format_selector = "480p30/480p/best[height<=480]"
     elif "360" in q_lower:
-        format_selector = "360p/bestvideo[height<=360]+bestaudio/best[height<=360]/best"
+        format_selector = "360p30/360p/best[height<=360]"
     elif "160" in q_lower:
-        format_selector = "160p/bestvideo[height<=160]+bestaudio/best[height<=160]/best"
+        format_selector = "160p30/160p/best[height<=160]"
     else:
-        format_selector = f"{quality}/bestvideo+bestaudio/best"
+        format_selector = f"{quality}/best"
 
     section_arg = f"*{seconds_to_time(start_sec)}-{seconds_to_time(end_sec)}"
 
