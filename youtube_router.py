@@ -118,7 +118,7 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, in
             f"https://www.youtube.com/watch?v={vid}"
         ]
         try:
-            t_res = subprocess.run(title_cmd, capture_output=True, text=True, timeout=15)
+            t_res = subprocess.run(title_cmd, capture_output=True, text=True, timeout=8)
             if t_res.returncode == 0 and t_res.stdout.strip():
                 stream_title = t_res.stdout.strip()
         except Exception:
@@ -137,7 +137,7 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, in
         ]
 
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
         except subprocess.TimeoutExpired:
             return {
                 "success": False,
@@ -219,7 +219,7 @@ def analyze_stream_endpoint(req: AnalyzeStreamRequest):
         innertube_res = fetch_innertube_stream_data(vid, include_all_chat=False)
         if innertube_res and innertube_res.get("success"):
             return innertube_res
-        if innertube_res and innertube_res.get("error") in ("MEMBERS_ONLY", "PRIVATE_STREAM"):
+        if innertube_res and innertube_res.get("error") in ("MEMBERS_ONLY", "PRIVATE_STREAM", "NO_CHAT_AVAILABLE"):
             return innertube_res
     except Exception as e:
         print(f"[InnerTube Engine Error] Video {vid}: {e}. Switching to frozen yt-dlp fallback...")
@@ -254,7 +254,7 @@ def fetch_chat_endpoint(req: FetchChatRequest):
         )
         if res and res.get("success"):
             return res
-        if res and res.get("error") in ("MEMBERS_ONLY", "PRIVATE_STREAM"):
+        if res and res.get("error") in ("MEMBERS_ONLY", "PRIVATE_STREAM", "NO_CHAT_AVAILABLE"):
             return res
     except Exception as e:
         print(f"[Fetch-Chat InnerTube Error] Video {vid}: {e}. Switching to frozen yt-dlp fallback...")

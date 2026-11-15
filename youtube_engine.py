@@ -1091,9 +1091,17 @@ def fetch_innertube_stream_data(
                 }
                 r = session.post(api_url, json=payload, timeout=12)
                 if r.status_code != 200:
-                    break
+                    if "get_live_chat_replay" in api_url:
+                        api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
+                        r = session.post(api_url, json=payload, timeout=12)
+                    if r.status_code != 200:
+                        break
                 data = r.json()
-                chat_cont = data.get("continuationContents", {}).get("liveChatContinuation", {})
+                chat_cont = (
+                    data.get("continuationContents", {}).get("liveChatReplayContinuation")
+                    or data.get("continuationContents", {}).get("liveChatContinuation")
+                    or {}
+                )
                 for act in chat_cont.get("actions", []):
                     all_json_lines.append(json.dumps(act))
 
@@ -1163,10 +1171,18 @@ def fetch_innertube_stream_data(
 
             r = session.post(api_url, json=payload, timeout=12)
             if r.status_code != 200:
-                break
+                if "get_live_chat_replay" in api_url:
+                    api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
+                    r = session.post(api_url, json=payload, timeout=12)
+                if r.status_code != 200:
+                    break
             data = r.json()
 
-            chat_cont = data.get("continuationContents", {}).get("liveChatContinuation", {})
+            chat_cont = (
+                data.get("continuationContents", {}).get("liveChatReplayContinuation")
+                or data.get("continuationContents", {}).get("liveChatContinuation")
+                or {}
+            )
             actions = chat_cont.get("actions", [])
 
             next_token = None
