@@ -12,11 +12,13 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from typing import Optional
 import uuid
 import datetime
 from pathlib import Path
 import os
 import sys
+import re
 
 # Import core clipping engine (Supports both Twitch and Kick)
 from stream_engine import (
@@ -220,17 +222,26 @@ def debug_clip(req: ClipRequest):
         return {"error": str(e)}
 
 @app.get("/download/{filename}")
-def download_clip(filename: str):
+def download_clip(filename: str, name: Optional[str] = None):
     safe_name = os.path.basename(filename)
     file_path = CLIPS_DIR / safe_name
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Requested clip file not found.")
+
+    export_name = safe_name
+    if name and name.strip():
+        clean = re.sub(r'[^\w\s\-\.\(\)]', '_', name.strip()).strip()
+        if not clean.lower().endswith(".mp4"):
+            clean += ".mp4"
+        if clean != ".mp4":
+            export_name = clean
+
     return FileResponse(
         path=str(file_path),
         media_type="video/mp4",
-        filename=safe_name,
+        filename=export_name,
         headers={
-            "Content-Disposition": f'attachment; filename="{safe_name}"',
+            "Content-Disposition": f'attachment; filename="{export_name}"',
             "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
             "Pragma": "no-cache",
             "Expires": "0"
