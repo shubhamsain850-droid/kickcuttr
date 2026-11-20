@@ -1009,6 +1009,8 @@ def fetch_innertube_stream_data(
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
     })
+    session.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
+    session.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
 
     # Live chat replay requires a clean session without user account cookies,
     # because user cookies inject personal watch history / resume timestamps,
@@ -1024,55 +1026,95 @@ def fetch_innertube_stream_data(
         cont_token = cursor.get("t") if cursor else (continuation_token if continuation_token and not cursor else None)
         skip_in_chunk = max(0, int(cursor.get("s") or 0)) if cursor else 0
 
-        # 1. Fetch initial watch page for API key, title, and initial continuation token (skipped on cursor resume!)
+        # 1. Fetch initial watch page or direct InnerTube /next for API key, title, and continuation token
         if not api_key or not cont_token:
-            resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
-            if resp.status_code != 200:
-                return None
-            html = resp.text
+            html = ""
+            try:
+                resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
+                if resp.status_code == 200:
+                    html = resp.text
+            except Exception as e:
+                print(f"[InnerTube HTML Fetch Note] {video_id}: {e}")
 
-            if not api_key:
+            if not api_key and html:
                 m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-                if not m_key:
-                    return None
-                api_key = m_key.group(1)
+                if m_key:
+                    api_key = m_key.group(1)
 
-            if not title:
+            if not title and html:
                 m_title = re.search(r'<title>(.*?)</title>', html)
-                title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Live Stream [{video_id}]"
+                if m_title:
+                    title = m_title.group(1).replace(" - YouTube", "").strip()
 
-            if not cont_token:
+            if not cont_token and html:
                 m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
                 if not m_cont:
                     m_cont = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
                 if not m_cont:
                     m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
-                if not m_cont:
-                    m_play = re.search(r'"playabilityStatus":\s*({.+?})\s*,\s*"', html)
-                    play_text = m_play.group(1).lower() if m_play else ""
-                    h_lower = html.lower()
-                    if ("members" in play_text and ("join this channel" in play_text or "level:" in play_text or "sponsors_only_video" in play_text or "members-only" in play_text)) or "sponsors_only_video" in h_lower or "badge_members_only" in h_lower or "join this channel to get access to members-only content" in h_lower:
-                        return {
-                            "success": False,
-                            "error": "MEMBERS_ONLY",
-                            "is_members_only": True,
-                            "title": title,
-                            "message": f"Members-Only stream ('{title}') - requires channel membership.",
-                            "video_id": video_id,
-                            "engine": "innertube"
-                        }
-                    elif ("private" in play_text and ("this video is private" in play_text or "private video" in play_text)) or "this video is private" in h_lower or "private video" in h_lower:
-                        return {
-                            "success": False,
-                            "error": "PRIVATE_STREAM",
-                            "is_private": True,
-                            "title": title,
-                            "message": f"Private stream ('{title}') - restricted access.",
-                            "video_id": video_id,
-                            "engine": "innertube"
-                        }
-                    return None
-                cont_token = m_cont.group(1)
+                if m_cont:
+                    cont_token = m_cont.group(1)
+
+            # Bulletproof Fallback: Direct InnerTube /youtubei/v1/next API (Bypasses all datacenter HTML blocks!)
+            if not cont_token or not title:
+                try:
+                    next_url = "https://www.youtube.com/youtubei/v1/next"
+                    next_payload = {
+                        "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
+                        "videoId": video_id
+                    }
+                    next_resp = session.post(next_url, json=next_payload, timeout=12)
+                    if next_resp.status_code == 200:
+                        next_data = next_resp.json()
+                        next_text = json.dumps(next_data)
+                        if not cont_token:
+                            mc = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', next_text)
+                            if not mc:
+                                mc = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', next_text)
+                            if mc:
+                                cont_token = mc.group(1)
+                        if not title:
+                            try:
+                                title = next_data.get('contents', {}).get('twoColumnWatchNextResults', {}).get('results', {}).get('results', {}).get('contents', [])[0].get('videoPrimaryInfoRenderer', {}).get('title', {}).get('runs', [])[0].get('text')
+                            except Exception:
+                                pass
+                except Exception as ex:
+                    print(f"[InnerTube Next API Fallback Note] {video_id}: {ex}")
+
+            # Universal Fallback for API key if blocked in HTML
+            api_key = api_key or "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
+            title = title or f"Live Stream [{video_id}]"
+
+            if not cont_token:
+                h_lower = html.lower() if html else ""
+                if ("members" in h_lower and ("join this channel" in h_lower or "members-only" in h_lower or "sponsors_only_video" in h_lower)):
+                    return {
+                        "success": False,
+                        "error": "MEMBERS_ONLY",
+                        "is_members_only": True,
+                        "title": title,
+                        "message": f"Members-Only stream ('{title}') - requires channel membership.",
+                        "video_id": video_id,
+                        "engine": "innertube"
+                    }
+                elif ("private" in h_lower and ("this video is private" in h_lower or "private video" in h_lower)):
+                    return {
+                        "success": False,
+                        "error": "PRIVATE_STREAM",
+                        "is_private": True,
+                        "title": title,
+                        "message": f"Private stream ('{title}') - restricted access.",
+                        "video_id": video_id,
+                        "engine": "innertube"
+                    }
+                return {
+                    "success": False,
+                    "error": "NO_CHAT_AVAILABLE",
+                    "title": title,
+                    "message": f"Live chat replay was not found or is disabled for '{title}'.",
+                    "video_id": video_id,
+                    "engine": "innertube"
+                }
 
         title = title or f"Live Stream [{video_id}]"
         api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}"
@@ -1305,6 +1347,8 @@ def fetch_video_comments(
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept-Language": "en-US,en;q=0.9",
     })
+    session.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
+    session.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
 
     # Optional cookies
     for p in [Path("cookies.txt"), Path(__file__).parent / "cookies.txt", Path("/tmp/cookies.txt")]:
