@@ -1026,63 +1026,61 @@ def fetch_innertube_stream_data(
         cont_token = cursor.get("t") if cursor else (continuation_token if continuation_token and not cursor else None)
         skip_in_chunk = max(0, int(cursor.get("s") or 0)) if cursor else 0
 
-        # 1. Fetch initial watch page or direct InnerTube /next for API key, title, and continuation token
+        # 1. Fetch continuation token and metadata via direct InnerTube /next API (Primary & Datacenter-Safe)
         if not api_key or not cont_token:
-            html = ""
-            try:
-                resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
-                if resp.status_code == 200:
-                    html = resp.text
-            except Exception as e:
-                print(f"[InnerTube HTML Fetch Note] {video_id}: {e}")
-
-            if not api_key and html:
-                m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-                if m_key:
-                    api_key = m_key.group(1)
-
-            if not title and html:
-                m_title = re.search(r'<title>(.*?)</title>', html)
-                if m_title:
-                    title = m_title.group(1).replace(" - YouTube", "").strip()
-
-            if not cont_token and html:
-                m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
-                if not m_cont:
-                    m_cont = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
-                if not m_cont:
-                    m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
-                if m_cont:
-                    cont_token = m_cont.group(1)
-
-            # Bulletproof Fallback: Direct InnerTube /youtubei/v1/next API (Bypasses all datacenter HTML blocks!)
-            if not cont_token or not title:
-                try:
-                    next_url = "https://www.youtube.com/youtubei/v1/next"
-                    next_payload = {
-                        "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
-                        "videoId": video_id
-                    }
-                    next_resp = session.post(next_url, json=next_payload, timeout=12)
-                    if next_resp.status_code == 200:
-                        next_data = next_resp.json()
-                        next_text = json.dumps(next_data)
-                        if not cont_token:
-                            mc = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', next_text)
-                            if not mc:
-                                mc = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', next_text)
-                            if mc:
-                                cont_token = mc.group(1)
-                        if not title:
-                            try:
-                                title = next_data.get('contents', {}).get('twoColumnWatchNextResults', {}).get('results', {}).get('results', {}).get('contents', [])[0].get('videoPrimaryInfoRenderer', {}).get('title', {}).get('runs', [])[0].get('text')
-                            except Exception:
-                                pass
-                except Exception as ex:
-                    print(f"[InnerTube Next API Fallback Note] {video_id}: {ex}")
-
-            # Universal Fallback for API key if blocked in HTML
             api_key = api_key or "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
+
+            # Step A: Direct InnerTube /youtubei/v1/next API (Bypasses all Google datacenter HTML 429 blocks)
+            try:
+                next_url = "https://www.youtube.com/youtubei/v1/next"
+                next_headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Referer': 'https://www.youtube.com/',
+                    'Origin': 'https://www.youtube.com'
+                }
+                next_payload = {
+                    "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
+                    "videoId": video_id
+                }
+                next_resp = requests.post(next_url, json=next_payload, headers=next_headers, timeout=12)
+                if next_resp.status_code == 200:
+                    next_data = next_resp.json()
+                    next_text = json.dumps(next_data)
+                    mc = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', next_text)
+                    if not mc:
+                        mc = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', next_text)
+                    if mc:
+                        cont_token = mc.group(1)
+                    if not title:
+                        try:
+                            title = next_data.get('contents', {}).get('twoColumnWatchNextResults', {}).get('results', {}).get('results', {}).get('contents', [])[0].get('videoPrimaryInfoRenderer', {}).get('title', {}).get('runs', [])[0].get('text')
+                        except Exception:
+                            pass
+            except Exception as ex:
+                print(f"[InnerTube Next API Error] {video_id}: {ex}")
+
+            # Step B: Fallback to HTML watch page only if Step A didn't yield cont_token
+            html = ""
+            if not cont_token:
+                try:
+                    resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
+                    if resp.status_code == 200:
+                        html = resp.text
+                        if not title:
+                            m_title = re.search(r'<title>(.*?)</title>', html)
+                            if m_title:
+                                title = m_title.group(1).replace(" - YouTube", "").strip()
+                        m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
+                        if not m_cont:
+                            m_cont = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
+                        if not m_cont:
+                            m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
+                        if m_cont:
+                            cont_token = m_cont.group(1)
+                except Exception as e:
+                    print(f"[InnerTube HTML Fetch Note] {video_id}: {e}")
+
             title = title or f"Live Stream [{video_id}]"
 
             if not cont_token:

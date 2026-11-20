@@ -201,28 +201,50 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, in
 
 @router.get("/debug-innertube/{video_id}")
 def debug_innertube(video_id: str):
-    import requests, re
-    session = requests.Session()
-    session.headers.update({
+    import requests, re, json
+    # Clean session for Next API
+    clean_session = requests.Session()
+    clean_session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com'
     })
-    resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=15)
-    html = resp.text
-    m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-    m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
-    m_cont2 = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
-    m_cont3 = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
+    next_url = "https://www.youtube.com/youtubei/v1/next"
+    next_payload = {
+        "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
+        "videoId": video_id
+    }
+    next_resp = clean_session.post(next_url, json=next_payload, timeout=12)
+    next_status = next_resp.status_code
+    next_json = next_resp.json() if next_status == 200 else {}
+    next_text = json.dumps(next_json)
+    mc = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', next_text)
+    if not mc:
+        mc = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', next_text)
+    token = mc.group(1) if mc else None
+
+    # Test get_live_chat_replay if token found
+    replay_status = None
+    replay_items = 0
+    if token:
+        api_url = "https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key=AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
+        r_rep = clean_session.post(api_url, json={
+            "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
+            "continuation": token
+        }, timeout=12)
+        replay_status = r_rep.status_code
+        if replay_status == 200:
+            actions = r_rep.json().get('continuationContents', {}).get('liveChatContinuation', {}).get('actions', [])
+            replay_items = len(actions)
+
     return {
-        "status_code": resp.status_code,
-        "html_len": len(html),
-        "has_api_key": bool(m_key),
-        "api_key": m_key.group(1) if m_key else None,
-        "has_cont1": bool(m_cont),
-        "has_cont2": bool(m_cont2),
-        "has_cont3": bool(m_cont3),
-        "url": resp.url,
-        "title_sample": html[:400]
+        "next_status": next_status,
+        "has_token": bool(token),
+        "token": token[:30] if token else None,
+        "replay_status": replay_status,
+        "replay_items": replay_items,
+        "next_error": next_json.get("error") if next_status != 200 else None
     }
 
 
