@@ -199,6 +199,33 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, in
         }
 
 
+@router.get("/debug-innertube/{video_id}")
+def debug_innertube(video_id: str):
+    import requests, re
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+    })
+    resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=15)
+    html = resp.text
+    m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+    m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
+    m_cont2 = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
+    m_cont3 = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
+    return {
+        "status_code": resp.status_code,
+        "html_len": len(html),
+        "has_api_key": bool(m_key),
+        "api_key": m_key.group(1) if m_key else None,
+        "has_cont1": bool(m_cont),
+        "has_cont2": bool(m_cont2),
+        "has_cont3": bool(m_cont3),
+        "url": resp.url,
+        "title_sample": html[:400]
+    }
+
+
 @router.post("/analyze-stream")
 def analyze_stream_endpoint(req: AnalyzeStreamRequest):
     """
