@@ -2048,23 +2048,9 @@ def fetch_video_comments(
     """
     t0 = time.time()
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
+    session.headers.update(INNERTUBE_HEADERS)
     session.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
     session.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
-
-    # Optional cookies
-    for p in [Path("cookies.txt"), Path(__file__).parent / "cookies.txt", Path("/tmp/cookies.txt")]:
-        if p.exists() and p.stat().st_size > 100:
-            try:
-                cj = http.cookiejar.MozillaCookieJar(str(p.resolve()))
-                cj.load(ignore_discard=True, ignore_expires=True)
-                session.cookies.update(cj)
-                break
-            except Exception:
-                pass
 
     limit = max(1, int(max_comments or 300))
     cursor = _decode_cursor(continuation_token, "ctm1:")
@@ -2076,71 +2062,90 @@ def fetch_video_comments(
         skip_in_page = max(0, int(cursor.get("s") or 0)) if cursor else 0
 
         if not api_key or not token:
-            # 1. Fetch initial watch page for API key and title
-            resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=12)
-            if resp.status_code != 200:
-                return {"success": False, "error": f"Failed to fetch video page (Status {resp.status_code})"}
+            api_key = api_key or "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
 
-            html = resp.text
-            if not api_key:
-                m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
-                if not m_key:
-                    return {"success": False, "error": "Could not extract InnerTube API key."}
-                api_key = m_key.group(1)
-
+            # 1. Primary path: direct InnerTube /player + /next (bypasses datacenter HTML 429 blocks)
             if not title:
-                m_title = re.search(r'<title>(.*?)</title>', html)
-                title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Video [{video_id}]"
+                pm = _fetch_player_meta(video_id, timeout=10, sess=session)
+                if pm.get("title"):
+                    title = pm["title"]
 
             if not token:
-                # 2. Initial /next request to find comments continuation token
-                payload = {
-                    "context": {
-                        "client": {
-                            "clientName": "WEB",
-                            "clientVersion": "2.20261106.00.00"
-                        }
-                    },
-                    "videoId": video_id
-                }
-                r = session.post(f"https://www.youtube.com/youtubei/v1/next?key={api_key}", json=payload, timeout=12)
-                if r.status_code != 200:
-                    return {"success": False, "error": "Initial next request failed."}
-                data = r.json()
+                try:
+                    payload = {"context": INNERTUBE_CLIENT_CTX, "videoId": video_id}
+                    r = session.post(f"https://www.youtube.com/youtubei/v1/next?key={api_key}", json=payload, timeout=12)
+                    if r.status_code == 200:
+                        data = r.json()
+                        if not title:
+                            try:
+                                title = data.get('contents', {}).get('twoColumnWatchNextResults', {}).get('results', {}).get('results', {}).get('contents', [])[0].get('videoPrimaryInfoRenderer', {}).get('title', {}).get('runs', [])[0].get('text')
+                            except Exception:
+                                pass
+                        for p in data.get("engagementPanels", []):
+                            panel = p.get("engagementPanelSectionListRenderer", {})
+                            if panel.get("panelIdentifier") == "engagement-panel-comments-section":
+                                sec_items = (
+                                    panel.get("content", {})
+                                    .get("sectionListRenderer", {})
+                                    .get("contents", [{}])[0]
+                                    .get("itemSectionRenderer", {})
+                                    .get("contents", [])
+                                )
+                                for ci in sec_items:
+                                    cir = ci.get("continuationItemRenderer", {}) if isinstance(ci, dict) else {}
+                                    cand = (
+                                        cir.get("continuationEndpoint", {}).get("continuationCommand", {}).get("token")
+                                        or cir.get("continuationEndpoint", {}).get("continuation")
+                                    )
+                                    if cand:
+                                        token = cand
+                                        break
+                                if not token:
+                                    s = json.dumps(panel.get("content") or panel)
+                                    m = re.search(r'"token":\s*"([^"]+)"', s)
+                                    if m:
+                                        token = m.group(1)
+                                if token:
+                                    break
+                except Exception as next_err:
+                    print(f"[Comments Next Primary Note] {video_id}: {next_err}")
 
-                for p in data.get("engagementPanels", []):
-                    panel = p.get("engagementPanelSectionListRenderer", {})
-                    if panel.get("panelIdentifier") == "engagement-panel-comments-section":
-                        # Prefer structured sectionListRenderer continuation over header sort-menu tokens
-                        sec_items = (
-                            panel.get("content", {})
-                            .get("sectionListRenderer", {})
-                            .get("contents", [{}])[0]
-                            .get("itemSectionRenderer", {})
-                            .get("contents", [])
-                        )
-                        for ci in sec_items:
-                            cir = ci.get("continuationItemRenderer", {}) if isinstance(ci, dict) else {}
-                            cand = (
-                                cir.get("continuationEndpoint", {}).get("continuationCommand", {}).get("token")
-                                or cir.get("continuationEndpoint", {}).get("continuation")
-                            )
-                            if cand:
-                                token = cand
-                                break
-                        if not token:
-                            s = json.dumps(panel.get("content") or panel)
-                            m = re.search(r'"token":\s*"([^"]+)"', s)
-                            if m:
-                                token = m.group(1)
-                        if token:
-                            break
-
-                if not token:
-                    s = json.dumps(data)
-                    m = re.search(r'"continuation":\s*"([a-zA-Z0-9_\-=]+)"', s)
-                    if m:
-                        token = m.group(1)
+            # 2. Fallback: watch page HTML if /next could not resolve API key/token
+            if not token:
+                resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=12)
+                if resp.status_code == 200:
+                    html = resp.text
+                    m_key = re.search(r'"INNERTUBE_API_KEY":"([^"]+)"', html)
+                    if m_key:
+                        api_key = m_key.group(1)
+                    if not title:
+                        m_title = re.search(r'<title>(.*?)</title>', html)
+                        title = m_title.group(1).replace(" - YouTube", "").strip() if m_title else f"Video [{video_id}]"
+                    payload = {"context": INNERTUBE_CLIENT_CTX, "videoId": video_id}
+                    r = session.post(f"https://www.youtube.com/youtubei/v1/next?key={api_key}", json=payload, timeout=12)
+                    if r.status_code == 200:
+                        data = r.json()
+                        for p in data.get("engagementPanels", []):
+                            panel = p.get("engagementPanelSectionListRenderer", {})
+                            if panel.get("panelIdentifier") == "engagement-panel-comments-section":
+                                sec_items = (
+                                    panel.get("content", {})
+                                    .get("sectionListRenderer", {})
+                                    .get("contents", [{}])[0]
+                                    .get("itemSectionRenderer", {})
+                                    .get("contents", [])
+                                )
+                                for ci in sec_items:
+                                    cir = ci.get("continuationItemRenderer", {}) if isinstance(ci, dict) else {}
+                                    cand = (
+                                        cir.get("continuationEndpoint", {}).get("continuationCommand", {}).get("token")
+                                        or cir.get("continuationEndpoint", {}).get("continuation")
+                                    )
+                                    if cand:
+                                        token = cand
+                                        break
+                                if token:
+                                    break
 
         title = title or f"Video [{video_id}]"
 
