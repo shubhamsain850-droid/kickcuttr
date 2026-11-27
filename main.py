@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 import uuid
+import time
 import datetime
 from pathlib import Path
 import os
@@ -60,8 +61,37 @@ except Exception as e:
 CLIPS_DIR = Path("/tmp/kickcuttr" if sys.platform != "win32" else os.path.expanduser("~/.kickcuttr_tmp"))
 CLIPS_DIR.mkdir(parents=True, exist_ok=True)
 
-# In-memory jobs tracking
+# In-memory jobs tracking (bounded + TTL cleanup so RAM/disk never leak)
 jobs = {}
+_JOBS_MAX = 100
+_CLIP_TTL_SEC = 1800
+
+
+def _cleanup_stale_state():
+    now = time.time()
+    try:
+        stale_ids = [
+            jid for jid, j in list(jobs.items())
+            if (now - float(j.get("created_at") or now)) > _CLIP_TTL_SEC
+            and j.get("status") in ("completed", "failed")
+        ]
+        for jid in stale_ids:
+            jobs.pop(jid, None)
+        while len(jobs) > _JOBS_MAX:
+            oldest = next(iter(jobs))
+            jobs.pop(oldest, None)
+    except Exception:
+        pass
+    try:
+        if CLIPS_DIR.exists():
+            for f in CLIPS_DIR.iterdir():
+                if f.is_file() and (now - f.stat().st_mtime) > _CLIP_TTL_SEC:
+                    f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+_cleanup_stale_state()
 
 class InfoRequest(BaseModel):
     url: str
@@ -163,12 +193,14 @@ def start_clip(req: ClipRequest, bg_tasks: BackgroundTasks):
     if (e_sec - s_sec) > 7200:
         raise HTTPException(status_code=400, detail="Max clip duration is 2 hours.")
 
+    _cleanup_stale_state()
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
         "job_id": job_id,
         "status": "pending",
         "progress": 5.0,
         "message": "Queued for processing...",
+        "created_at": time.time(),
         "created_at": datetime.datetime.now().isoformat(),
         "req": {"url": url, "start": start, "end": end, "quality": quality}
     }

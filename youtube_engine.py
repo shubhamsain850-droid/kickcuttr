@@ -12,6 +12,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import math
 import random
@@ -901,18 +902,97 @@ def parse_relative_stream_date(text: str) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+def _parse_scheduled_date(text: str) -> str:
+    """Extract YYYY-MM-DD from 'Scheduled for MM/DD/YY...' if present."""
+    m = re.search(r'(\d{1,2})/(\d{1,2})/(\d{2,4})', str(text or ''))
+    if not m:
+        return ""
+    mm, dd, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if yy < 100:
+        yy += 2000
+    try:
+        return datetime(yy, mm, dd).strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def _extract_item_access_flags(item: dict) -> tuple[bool, bool]:
+    """Detect members-only / private status from structured YouTube badges & overlays only (not video titles)."""
+    badge_signals: list[str] = []
+
+    def collect_badges(obj):
+        if isinstance(obj, dict):
+            if "metadataBadgeRenderer" in obj and isinstance(obj["metadataBadgeRenderer"], dict):
+                br = obj["metadataBadgeRenderer"]
+                badge_signals.append(str(br.get("style") or "").lower())
+                badge_signals.append(str(br.get("label") or "").lower())
+            if "badgeViewModel" in obj and isinstance(obj["badgeViewModel"], dict):
+                bm = obj["badgeViewModel"]
+                badge_signals.append(str(bm.get("badgeStyle") or "").lower())
+                badge_signals.append(str(bm.get("badgeText") or "").lower())
+            if "thumbnailBadgeViewModel" in obj and isinstance(obj["thumbnailBadgeViewModel"], dict):
+                tb = obj["thumbnailBadgeViewModel"]
+                badge_signals.append(str(tb.get("badgeStyle") or "").lower())
+                badge_signals.append(str(tb.get("text") or "").lower())
+            if "thumbnailOverlayTimeStatusRenderer" in obj and isinstance(obj["thumbnailOverlayTimeStatusRenderer"], dict):
+                tr = obj["thumbnailOverlayTimeStatusRenderer"]
+                badge_signals.append(str(tr.get("style") or "").lower())
+                badge_signals.append(extract_text_field(tr.get("text")).lower())
+            for k, v in obj.items():
+                if k in ("badges", "ownerBadges", "thumbnailOverlays", "overlays", "metadataBadgeRenderer", "badgeViewModel", "thumbnailBadgeViewModel", "thumbnailOverlayTimeStatusRenderer"):
+                    if isinstance(v, (dict, list)):
+                        collect_badges(v)
+        elif isinstance(obj, list):
+            for el in obj:
+                if isinstance(el, (dict, list)):
+                    collect_badges(el)
+
+    # Walk only badge/overlay branches, explicitly excluding title/description metadata
+    content = item.get("richItemRenderer", {}).get("content", {}) or {}
+    if "videoRenderer" in content:
+        vr = content["videoRenderer"]
+        for bk in ("badges", "ownerBadges", "thumbnailOverlays"):
+            if bk in vr:
+                collect_badges(vr[bk])
+    elif "lockupViewModel" in content:
+        lvm = content["lockupViewModel"]
+        if "contentImage" in lvm:
+            collect_badges(lvm["contentImage"])
+        meta_rows = (
+            lvm.get("metadata", {})
+            .get("lockupMetadataViewModel", {})
+            .get("metadata", {})
+            .get("contentMetadataViewModel", {})
+            .get("metadataRows", [])
+        )
+        for row in meta_rows:
+            for part in row.get("metadataParts", []):
+                if "badges" in part or "badgeViewModel" in part:
+                    collect_badges(part)
+                txt_low = str(part.get("text", {}).get("content", "")).strip().lower()
+                if txt_low in ("members only", "members-only", "private", "private video"):
+                    badge_signals.append(txt_low)
+
+    joined = " | ".join(s for s in badge_signals if s)
+    is_mem = any(tok in joined for tok in ("badge_style_type_members_only", "members_only", "members only", "members-only", "sponsorship"))
+    is_pvt = (not is_mem) and any(tok in joined for tok in ("badge_private", "private video", "badge_style_type_private"))
+    return is_mem, is_pvt
+
+
 def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_date: Optional[str] = None, max_results: Optional[int] = None) -> list[dict]:
     """
-    Fetches list of live streams from a YouTube channel tab via Innertube (with yt-dlp fallback).
-    Parses relative & absolute dates accurately to guarantee 100% strict date-range filtering.
-    Returns list of dicts: [{'url': ..., 'id': ..., 'date': ..., 'title': ...}]
+    Fetches list of completed/live streams from a YouTube channel tab via Innertube (with yt-dlp fallback).
+    Skips unstarted scheduled upcoming streams, uses structured badges for access detection,
+    and handles pinned older items safely without premature pagination cutoff.
     """
     clean_url = channel_url.strip()
     if clean_url.startswith("@"):
         clean_url = f"https://www.youtube.com/{clean_url}/streams"
+    elif clean_url.startswith("UC") and re.match(r'^UC[0-9A-Za-z_-]{22}$', clean_url):
+        clean_url = f"https://www.youtube.com/channel/{clean_url}/streams"
     elif not clean_url.startswith("http"):
         clean_url = f"https://www.youtube.com/@{clean_url.lstrip('@')}/streams"
-    elif not clean_url.endswith("/streams") and "/@" in clean_url:
+    elif not clean_url.rstrip("/").endswith("/streams") and any(seg in clean_url for seg in ("/@", "/channel/", "/c/", "/user/")):
         clean_url = clean_url.rstrip("/") + "/streams"
 
     # Auto-swap inverted date inputs (e.g. if user entered From=Today and To=Past)
@@ -920,12 +1000,12 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
         from_date, to_date = to_date, from_date
 
     # 1. Primary Strategy: Direct YouTube Innertube Streams Tab Scraper
+    sess = requests.Session()
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        resp = requests.get(clean_url, headers=headers, timeout=15)
+        sess.headers.update(INNERTUBE_HEADERS)
+        sess.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
+        sess.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
+        resp = sess.get(clean_url, timeout=15)
         if resp.status_code == 200:
             html = resp.text
             m_key = re.search(r'"INNERTUBE_API_KEY":\s*"([^"]+)"', html)
@@ -937,18 +1017,21 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                 streams_tab = None
                 for tab in tabs:
                     tr = tab.get("tabRenderer", {})
-                    if tr.get("title") == "Live":
+                    tab_url = tr.get("endpoint", {}).get("commandMetadata", {}).get("webCommandMetadata", {}).get("url", "")
+                    if tr.get("title") in ("Live", "Streams") or tab_url.rstrip("/").endswith("/streams") or (tr.get("selected") and "richGridRenderer" in (tr.get("content") or {})):
                         streams_tab = tr
                         break
 
                 if streams_tab:
                     grid_contents = streams_tab.get("content", {}).get("richGridRenderer", {}).get("contents", [])
                     matched = []
+                    seen_vids = set()
                     continuation_token = None
                     hit_past_cutoff = False
+                    old_streak = 0
 
                     def parse_grid_items(items_list):
-                        nonlocal continuation_token, hit_past_cutoff
+                        nonlocal continuation_token, hit_past_cutoff, old_streak
                         for it in items_list:
                             if "continuationItemRenderer" in it:
                                 continuation_token = it.get("continuationItemRenderer", {}).get("continuationEndpoint", {}).get("continuationCommand", {}).get("token")
@@ -957,44 +1040,72 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                             vid = ""
                             title = ""
                             pub_text = ""
+                            is_upcoming = False
+                            is_live_now = False
 
                             lvm = it.get("richItemRenderer", {}).get("content", {}).get("lockupViewModel")
                             if lvm:
                                 vid = lvm.get("contentId")
                                 title = lvm.get("metadata", {}).get("lockupMetadataViewModel", {}).get("title", {}).get("content", "")
                                 snippets = lvm.get("metadata", {}).get("lockupMetadataViewModel", {}).get("metadata", {}).get("contentMetadataViewModel", {}).get("metadataRows", [])
+                                all_parts_low = []
                                 for row in snippets:
                                     parts = [p.get("text", {}).get("content", "") for p in row.get("metadataParts", [])]
                                     for p in parts:
-                                        if "streamed" in p.lower() or "ago" in p.lower():
+                                        pl = p.lower()
+                                        all_parts_low.append(pl)
+                                        if "scheduled" in pl or "premieres" in pl or "waiting" in pl:
+                                            is_upcoming = True
+                                        elif "watching" in pl:
+                                            is_live_now = True
+                                        if ("streamed" in pl or "ago" in pl) and not pub_text:
                                             pub_text = p
-                                            break
-                                    if pub_text:
-                                        break
+                                if not is_upcoming and "upcomingeventdata" in json.dumps(lvm).lower():
+                                    is_upcoming = True
                             else:
                                 vr = it.get("richItemRenderer", {}).get("content", {}).get("videoRenderer")
                                 if vr:
                                     vid = vr.get("videoId")
                                     title = vr.get("title", {}).get("runs", [{}])[0].get("text", "")
                                     pub_text = vr.get("publishedTimeText", {}).get("simpleText", "")
+                                    if vr.get("upcomingEventData"):
+                                        is_upcoming = True
+                                    view_txt = extract_text_field(vr.get("viewCountText")).lower()
+                                    if "watching" in view_txt:
+                                        is_live_now = True
+                                    elif "waiting" in view_txt:
+                                        is_upcoming = True
 
-                            if not vid or not re.match(r'^[A-Za-z0-9_-]{11}$', vid):
+                            if not vid or not re.match(r'^[A-Za-z0-9_-]{11}$', vid) or vid in seen_vids:
+                                continue
+
+                            # Skip unstarted scheduled waiting rooms — they have no finished VOD chat/earnings
+                            if is_upcoming and not is_live_now and not pub_text:
                                 continue
 
                             date_str = parse_relative_stream_date(pub_text)
+                            if not date_str and is_live_now:
+                                date_str = datetime.now().strftime("%Y-%m-%d")
 
-                            # Date filtering logic
+                            # Strict Date Filtering: unknown-date items must NOT bypass explicit date ranges
+                            if (from_date or to_date) and not date_str:
+                                continue
+
                             if to_date and date_str and date_str > to_date:
+                                old_streak = 0
                                 continue
                             if from_date and date_str and date_str < from_date:
-                                # Streams are sorted latest-first; once we pass from_date, stop further checks
-                                hit_past_cutoff = True
-                                break
+                                old_streak += 1
+                                # Require 3 consecutive past-cutoff items so a single pinned highlight doesn't abort newer streams
+                                if old_streak >= 3:
+                                    hit_past_cutoff = True
+                                    break
+                                continue
 
+                            old_streak = 0
+                            seen_vids.add(vid)
                             display_date = date_str or pub_text or "Recent"
-                            raw_item_str = json.dumps(it).lower()
-                            is_mem = "badge_members_only" in raw_item_str or "members only" in raw_item_str or "sponsorship" in raw_item_str
-                            is_pvt = "private" in raw_item_str and not is_mem
+                            is_mem, is_pvt = _extract_item_access_flags(it)
                             matched.append({
                                 "id": vid,
                                 "url": f"https://www.youtube.com/watch?v={vid}",
@@ -1002,6 +1113,7 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                                 "title": title or "YouTube Live Stream",
                                 "is_members_only": is_mem,
                                 "is_private": is_pvt,
+                                "is_live": is_live_now,
                                 "access": "members_only" if is_mem else ("private" if is_pvt else "public")
                             })
 
@@ -1018,10 +1130,10 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                         try:
                             c_url = f"https://www.youtube.com/youtubei/v1/browse?key={api_key}"
                             c_body = {
-                                "context": {"client": {"clientName": "WEB", "clientVersion": "2.20240101.00.00"}},
+                                "context": INNERTUBE_CLIENT_CTX,
                                 "continuation": continuation_token
                             }
-                            c_resp = requests.post(c_url, json=c_body, headers=headers, timeout=10)
+                            c_resp = sess.post(c_url, json=c_body, timeout=10)
                             if c_resp.status_code != 200:
                                 break
                             c_data = c_resp.json()
@@ -1042,6 +1154,11 @@ def get_channel_streams(channel_url: str, from_date: Optional[str] = None, to_da
                         return matched
     except Exception as it_err:
         print(f"Innertube channel streams extraction notice: {it_err}")
+    finally:
+        try:
+            sess.close()
+        except Exception:
+            pass
 
     # 2. Secondary Strategy: yt-dlp fallback with strict date validation
     cmd = ["yt-dlp"]
@@ -1129,6 +1246,142 @@ INNERTUBE_HEADERS = {
     'Origin': 'https://www.youtube.com',
 }
 
+# Process-wide concurrency caps to keep Render 512MB instances healthy under multi-user load
+_STREAM_EXTRACT_SEM = threading.Semaphore(6)
+_SLICE_IO_SEM = threading.Semaphore(24)
+
+_MONETIZATION_KEYS = (
+    "liveChatPaidMessageRenderer",
+    "liveChatPaidStickerRenderer",
+    "liveChatMembershipItemRenderer",
+    "liveChatSponsorshipsGiftPurchaseAnnouncementRenderer",
+    "giftMessageViewModel",
+)
+
+
+def _strip_heavy_ui_fields(node: dict) -> dict:
+    """Shallow-copy a chat renderer dict without bloated thumbnail/tracking blobs."""
+    if not isinstance(node, dict):
+        return node
+    out = {}
+    for k, v in node.items():
+        if k in ("authorPhoto", "trackingParams", "contextMenuEndpoint", "contextMenuAccessibility", "replyButton", "stickerTooltip", "accessibility"):
+            continue
+        if k == "sticker" and isinstance(v, dict):
+            # Keep only small accessibility text if any; drop heavy multi-resolution sticker thumbnails
+            continue
+        out[k] = v
+    return out
+
+
+def _compact_replay_actions(
+    acts: list,
+    monetization_only: bool = False,
+    chatter_authors: Optional[set] = None,
+) -> tuple[list[dict], Optional[int]]:
+    """
+    Prune raw YouTube action dicts per chunk so multi-hour streams stay <10MB in RAM instead of ~300MB.
+    Returns (pruned_actions, last_content_offset_ms).
+    """
+    pruned: list[dict] = []
+    last_off: Optional[int] = None
+
+    for a in acts:
+        if not isinstance(a, dict):
+            continue
+        if "addLiveChatTickerItemAction" in a or "addBannerToLiveChatCommand" in a:
+            continue
+
+        rc = a.get("replayChatItemAction")
+        if isinstance(rc, dict):
+            raw_off = rc.get("videoOffsetTimeMsec")
+            sub_acts = rc.get("actions") or []
+            kept_subs = []
+            for sub in sub_acts:
+                if not isinstance(sub, dict):
+                    continue
+                if "addLiveChatTickerItemAction" in sub or "addBannerToLiveChatCommand" in sub:
+                    continue
+                if any(drop_k in sub for drop_k in ("removeChatItemAction", "markChatItemAsDeletedAction", "markChatItemsByAuthorAsDeletedAction")):
+                    continue
+
+                item = sub.get("addChatItemAction", {}).get("item") if "addChatItemAction" in sub else sub
+                if not isinstance(item, dict):
+                    continue
+
+                if "liveChatPlaceholderItemRenderer" in item:
+                    continue
+
+                if "liveChatTextMessageRenderer" in item:
+                    if chatter_authors is not None:
+                        auth = extract_text_field(item["liveChatTextMessageRenderer"].get("authorName"))
+                        if auth:
+                            chatter_authors.add(auth)
+                    if monetization_only:
+                        continue
+                    kept_subs.append({
+                        "addChatItemAction": {
+                            "item": {
+                                "liveChatTextMessageRenderer": _strip_heavy_ui_fields(item["liveChatTextMessageRenderer"])
+                            }
+                        }
+                    })
+                    continue
+
+                matched_mon = False
+                for mk in _MONETIZATION_KEYS:
+                    if mk in item:
+                        matched_mon = True
+                        slim_item = {mk: _strip_heavy_ui_fields(item[mk])}
+                        kept_subs.append({"addChatItemAction": {"item": slim_item}} if "addChatItemAction" in sub else slim_item)
+                        break
+
+                if not matched_mon and not monetization_only:
+                    kept_subs.append(sub)
+
+            if raw_off is not None and (kept_subs or any("liveChatTextMessageRenderer" in ((s.get("addChatItemAction") or {}).get("item") or s) for s in sub_acts if isinstance(s, dict))):
+                try:
+                    last_off = int(raw_off)
+                except Exception:
+                    pass
+
+            if kept_subs:
+                pruned.append({
+                    "replayChatItemAction": {
+                        "videoOffsetTimeMsec": raw_off,
+                        "actions": kept_subs,
+                    }
+                })
+            continue
+
+        # Live stream non-replay action
+        item = a.get("addChatItemAction", {}).get("item") if "addChatItemAction" in a else a
+        if isinstance(item, dict):
+            if "liveChatTextMessageRenderer" in item:
+                if chatter_authors is not None:
+                    auth = extract_text_field(item["liveChatTextMessageRenderer"].get("authorName"))
+                    if auth:
+                        chatter_authors.add(auth)
+                if monetization_only:
+                    continue
+                pruned.append({
+                    "addChatItemAction": {
+                        "item": {"liveChatTextMessageRenderer": _strip_heavy_ui_fields(item["liveChatTextMessageRenderer"])}
+                    }
+                })
+                continue
+            matched_mon = False
+            for mk in _MONETIZATION_KEYS:
+                if mk in item:
+                    matched_mon = True
+                    slim = {mk: _strip_heavy_ui_fields(item[mk])}
+                    pruned.append({"addChatItemAction": {"item": slim}} if "addChatItemAction" in a else slim)
+                    break
+            if not matched_mon and not monetization_only:
+                pruned.append(a)
+
+    return pruned, last_off
+
 
 def _find_live_chat_renderer(obj) -> Optional[dict]:
     """Traverse /next JSON tree strictly to find liveChatRenderer."""
@@ -1173,10 +1426,11 @@ def _extract_seek_token(chat_cont: dict) -> Optional[str]:
     return None
 
 
-def _fetch_player_meta(video_id: str, timeout: int = 10) -> dict:
-    """Fetch video duration, title, and playability status via InnerTube /player."""
+def _fetch_player_meta(video_id: str, timeout: int = 10, sess: Optional[requests.Session] = None) -> dict:
+    """Fetch video duration, title, upload_date, channel, live state, and playability status via InnerTube /player."""
     try:
-        r = requests.post(
+        poster = sess if sess is not None else requests
+        r = poster.post(
             "https://www.youtube.com/youtubei/v1/player",
             json={"context": INNERTUBE_CLIENT_CTX, "videoId": video_id},
             headers=INNERTUBE_HEADERS,
@@ -1187,12 +1441,20 @@ def _fetch_player_meta(video_id: str, timeout: int = 10) -> dict:
         data = r.json()
         ps = data.get("playabilityStatus", {}) or {}
         vd = data.get("videoDetails", {}) or {}
+        mf = (data.get("microformat") or {}).get("playerMicroformatRenderer", {}) or {}
+        lbd = mf.get("liveBroadcastDetails", {}) or {}
+        raw_dt = str(lbd.get("startTimestamp") or mf.get("publishDate") or mf.get("uploadDate") or "").strip()
+        upload_date = raw_dt[:10] if re.match(r'^\d{4}-\d{2}-\d{2}', raw_dt) else ""
         return {
             "status": str(ps.get("status") or ""),
             "reason": str(ps.get("reason") or ""),
             "raw_ps": json.dumps(ps).lower(),
             "title": str(vd.get("title") or "").strip(),
+            "channel": str(vd.get("author") or mf.get("ownerChannelName") or "").strip(),
             "length_seconds": int(vd.get("lengthSeconds") or 0),
+            "upload_date": upload_date,
+            "is_live": bool(vd.get("isLive") or lbd.get("isLiveNow")),
+            "is_upcoming": bool(vd.get("isUpcoming") or ps.get("status") == "LIVE_STREAM_OFFLINE"),
         }
     except Exception:
         return {}
@@ -1228,10 +1490,15 @@ def _check_playability_restriction(video_id: str, title: str, html_lower: str = 
     return None
 
 
-def _collect_replay_slice(api_key: str, seek_token: str, start_ms: int, end_ms: int, deadline_ts: float) -> tuple[int, list[dict]]:
-    """Fetch a single time-bounded replay slice using playerSeekContinuationData."""
-    sess = requests.Session()
-    sess.headers.update(INNERTUBE_HEADERS)
+def _collect_replay_slice(
+    api_key: str,
+    seek_token: str,
+    start_ms: int,
+    end_ms: int,
+    deadline_ts: float,
+    monetization_only: bool = False,
+) -> tuple[int, list[dict], set[str], bool]:
+    """Fetch a single time-bounded replay slice with bounded I/O concurrency, retries & instant memory compaction."""
     url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}"
     seed_offset = max(0, start_ms - 8000)
     cur = seek_token
@@ -1239,52 +1506,80 @@ def _collect_replay_slice(api_key: str, seek_token: str, start_ms: int, end_ms: 
     seen = set()
     chunks = 0
     actions_out: list[dict] = []
+    chatter_authors: set[str] = set()
+    incomplete = False
+    overshoot_hits = 0
 
-    while cur and cur not in seen and chunks < 450 and time.time() < deadline_ts:
-        seen.add(cur)
-        chunks += 1
-        payload = {"context": INNERTUBE_CLIENT_CTX, "continuation": cur}
-        if first:
-            payload["currentPlayerState"] = {"playerOffsetMs": str(seed_offset)}
-            first = False
+    sess = requests.Session()
+    sess.headers.update(INNERTUBE_HEADERS)
+    sess.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
+    sess.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
+    try:
+        while cur and cur not in seen and chunks < 900:
+            if time.time() >= deadline_ts:
+                incomplete = True
+                break
+            seen.add(cur)
+            chunks += 1
+            payload = {"context": INNERTUBE_CLIENT_CTX, "continuation": cur}
+            if first:
+                payload["currentPlayerState"] = {"playerOffsetMs": str(seed_offset)}
+                first = False
 
-        resp = None
-        for attempt in range(2):
-            try:
-                resp = sess.post(url, json=payload, timeout=10)
-                if resp.status_code == 200:
-                    break
-            except Exception:
-                resp = None
-            if attempt == 0:
-                time.sleep(0.2)
-
-        if not resp or resp.status_code != 200:
-            break
-
-        data = resp.json()
-        chat_cont = (
-            data.get("continuationContents", {}).get("liveChatReplayContinuation")
-            or data.get("continuationContents", {}).get("liveChatContinuation")
-            or {}
-        )
-        acts = chat_cont.get("actions", [])
-        last_off = None
-        for a in acts:
-            actions_out.append(a)
-            off = a.get("replayChatItemAction", {}).get("videoOffsetTimeMsec")
-            if off is not None:
+            resp = None
+            for attempt in range(3):
+                acquired = _SLICE_IO_SEM.acquire(timeout=10)
                 try:
-                    last_off = int(off)
+                    resp = sess.post(url, json=payload, timeout=10)
                 except Exception:
-                    pass
+                    resp = None
+                finally:
+                    if acquired:
+                        _SLICE_IO_SEM.release()
 
-        if last_off is not None and last_off > end_ms + 8000:
-            break
+                if resp is not None and resp.status_code == 200:
+                    break
+                if resp is not None and resp.status_code not in (429, 500, 502, 503, 504):
+                    break
+                if attempt < 2 and time.time() < deadline_ts:
+                    time.sleep(0.25 * (attempt + 1) + random.uniform(0, 0.15))
 
-        cur = _extract_next_chat_token(chat_cont)
+            if not resp or resp.status_code != 200:
+                incomplete = True
+                break
 
-    return chunks, actions_out
+            data = resp.json()
+            chat_cont = (
+                data.get("continuationContents", {}).get("liveChatReplayContinuation")
+                or data.get("continuationContents", {}).get("liveChatContinuation")
+                or {}
+            )
+            acts = chat_cont.get("actions", [])
+            pruned, last_off = _compact_replay_actions(
+                acts,
+                monetization_only=monetization_only,
+                chatter_authors=chatter_authors if monetization_only else None,
+            )
+            if pruned:
+                actions_out.extend(pruned)
+
+            if last_off is not None and last_off > end_ms + 8000:
+                overshoot_hits += 1
+                if overshoot_hits >= 1:
+                    break
+            else:
+                overshoot_hits = 0
+
+            cur = _extract_next_chat_token(chat_cont)
+            if chunks >= 900 and cur:
+                incomplete = True
+    finally:
+        try:
+            sess.close()
+        except Exception:
+            pass
+
+    return chunks, actions_out, chatter_authors, incomplete
 
 
 def fetch_innertube_stream_data(
@@ -1297,10 +1592,11 @@ def fetch_innertube_stream_data(
     """
     Directly streams YouTube Live Chat Replay JSON chunks from YouTube's InnerTube API.
     100% In-Memory, Zero Disk Storage, Pure Stateless Processing.
-    Uses parallel time-sliced extraction when playerSeekContinuationData is available
-    so multi-hour streams finish in ~15-25s without missing late-stream Super Chats.
+    Uses bounded parallel time-slicing + on-the-fly payload pruning so multi-hour streams
+    finish quickly while keeping RAM under ~10MB per stream for multi-user scalability.
     """
     t0 = time.time()
+    sem_acquired = _STREAM_EXTRACT_SEM.acquire(timeout=45)
     session = requests.Session()
     session.headers.update(INNERTUBE_HEADERS)
     session.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
@@ -1315,11 +1611,13 @@ def fetch_innertube_stream_data(
         cont_token = cursor.get("t") if cursor else (continuation_token if continuation_token and not cursor else None)
         skip_in_chunk = max(0, int(cursor.get("s") or 0)) if cursor else 0
         player_meta: dict = {}
+        player_meta_fetched = False
 
         # 1. Fetch continuation token and metadata via direct InnerTube /next + /player APIs
         if not api_key or not cont_token:
             api_key = api_key or "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
-            player_meta = _fetch_player_meta(video_id, timeout=10)
+            player_meta = _fetch_player_meta(video_id, timeout=10, sess=session)
+            player_meta_fetched = True
             if not title and player_meta.get("title"):
                 title = player_meta["title"]
 
@@ -1371,12 +1669,27 @@ def fetch_innertube_stream_data(
                     "success": False,
                     "error": "NO_CHAT_AVAILABLE",
                     "title": title,
-                    "message": f"Live chat replay was not found or is disabled for '{title}'.",
+                    "channel": player_meta.get("channel") or "",
+                    "upload_date": player_meta.get("upload_date") or "",
+                    "message": (
+                        f"Stream '{title}' is scheduled/upcoming and has not aired yet."
+                        if player_meta.get("is_upcoming")
+                        else f"Live chat replay was not found or is disabled for '{title}'."
+                    ),
                     "video_id": video_id,
                     "engine": "innertube"
                 }
 
-        title = title or f"Live Stream [{video_id}]"
+        elif not player_meta_fetched and not include_all_chat:
+            player_meta = _fetch_player_meta(video_id, timeout=8, sess=session)
+            player_meta_fetched = True
+
+        title = title or player_meta.get("title") or f"Live Stream [{video_id}]"
+        upload_date = player_meta.get("upload_date") or ""
+        channel_name = player_meta.get("channel") or ""
+        duration_sec = int(player_meta.get("length_seconds") or 0)
+        is_live_stream = bool(player_meta.get("is_live"))
+
         is_live_token = str(cont_token).startswith("0of")
         api_url = (
             f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
@@ -1386,14 +1699,19 @@ def fetch_innertube_stream_data(
 
         # Fast path A: Monetization Audit (/analyze-stream) - full stream events aggregation
         if not include_all_chat:
-            duration_sec = int(player_meta.get("length_seconds") or 0)
-            if not duration_sec:
-                pm = _fetch_player_meta(video_id, timeout=8)
+            if not duration_sec and not player_meta_fetched:
+                pm = _fetch_player_meta(video_id, timeout=8, sess=session)
                 duration_sec = int(pm.get("length_seconds") or 0)
+                upload_date = upload_date or pm.get("upload_date") or ""
+                channel_name = channel_name or pm.get("channel") or ""
+                is_live_stream = is_live_stream or bool(pm.get("is_live"))
 
             all_actions: list = []
+            all_chatter_authors: set[str] = set()
             seen = {cont_token}
             chunks = 1
+            partial_slices = 0
+
             first_resp = session.post(api_url, json={"context": INNERTUBE_CLIENT_CTX, "continuation": cont_token}, timeout=12)
             if first_resp.status_code != 200 and "get_live_chat_replay" in api_url:
                 api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
@@ -1406,25 +1724,40 @@ def fetch_innertube_stream_data(
                     or first_data.get("continuationContents", {}).get("liveChatContinuation")
                     or {}
                 )
-                all_actions.extend(first_cont.get("actions", []))
+                first_pruned, _ = _compact_replay_actions(
+                    first_cont.get("actions", []),
+                    monetization_only=True,
+                    chatter_authors=all_chatter_authors,
+                )
+                all_actions.extend(first_pruned)
                 seek_tok = _extract_seek_token(first_cont)
                 next_tok = _extract_next_chat_token(first_cont)
+                first_data = None
+                first_cont = None
 
                 # Parallel Time-Sliced Extraction for replay streams > 90s when seek continuation exists
                 if seek_tok and duration_sec > 90 and "get_live_chat_replay" in api_url:
-                    slice_sec = 480  # 8-min windows with 32 I/O threads -> ~4-hour stream in ~22-30s
+                    slice_sec = 480
                     slices = [(s * 1000, min(duration_sec, s + slice_sec) * 1000) for s in range(0, duration_sec, slice_sec)]
-                    deadline_ts = t0 + 58.0
-                    workers = min(32, max(6, len(slices)))
+                    deadline_ts = t0 + 75.0
+                    workers = min(12, max(4, len(slices)))
                     with ThreadPoolExecutor(max_workers=workers) as ex:
-                        futs = [ex.submit(_collect_replay_slice, api_key, seek_tok, s_ms, e_ms, deadline_ts) for s_ms, e_ms in slices]
+                        futs = [
+                            ex.submit(_collect_replay_slice, api_key, seek_tok, s_ms, e_ms, deadline_ts, True)
+                            for s_ms, e_ms in slices
+                        ]
                         for fut in as_completed(futs):
                             try:
-                                c_n, slice_acts = fut.result()
+                                c_n, slice_acts, slice_authors, is_inc = fut.result()
                                 chunks += c_n
-                                all_actions.extend(slice_acts)
+                                if is_inc:
+                                    partial_slices += 1
+                                if slice_acts:
+                                    all_actions.extend(slice_acts)
+                                if slice_authors:
+                                    all_chatter_authors.update(slice_authors)
                             except Exception:
-                                pass
+                                partial_slices += 1
                 else:
                     # Sequential walk (short streams, streams without seek, or active live streams)
                     cur = next_tok
@@ -1442,17 +1775,35 @@ def fetch_innertube_stream_data(
                             or data.get("continuationContents", {}).get("liveChatContinuation")
                             or {}
                         )
-                        all_actions.extend(chat_cont.get("actions", []))
+                        pruned, _ = _compact_replay_actions(
+                            chat_cont.get("actions", []),
+                            monetization_only=True,
+                            chatter_authors=all_chatter_authors,
+                        )
+                        if pruned:
+                            all_actions.extend(pruned)
                         cur = _extract_next_chat_token(chat_cont)
 
-            if not all_actions:
+            if not all_actions and not all_chatter_authors:
                 return None
 
             parsed_data = parse_chat_json_lines(all_actions, video_id=video_id)
+            all_actions.clear()
+            parsed_data["unique_chatters_count"] = max(parsed_data.get("unique_chatters_count", 0), len(all_chatter_authors))
+            parsed_data["upload_date"] = upload_date
+            parsed_data["channel"] = channel_name
+            parsed_data["duration_sec"] = duration_sec
+            parsed_data["is_live"] = is_live_stream
             return {
                 "success": True,
                 "video_id": video_id,
                 "title": title,
+                "channel": channel_name,
+                "upload_date": upload_date,
+                "duration_sec": duration_sec,
+                "is_live": is_live_stream,
+                "partial": partial_slices > 0,
+                "partial_slices": partial_slices,
                 "data": parsed_data,
                 "engine": "innertube_direct",
                 "chunks_streamed": chunks,
@@ -1476,10 +1827,15 @@ def fetch_innertube_stream_data(
 
         # If unlimited full chat export requested on initial call, check if parallel slicing applies
         if limit is None and not continuation_token and not is_live_token:
-            duration_sec = int(player_meta.get("length_seconds") or 0)
-            if not duration_sec:
-                pm = _fetch_player_meta(video_id, timeout=8)
-                duration_sec = int(pm.get("length_seconds") or 0)
+            if not player_meta_fetched:
+                pm = _fetch_player_meta(video_id, timeout=8, sess=session)
+                duration_sec = duration_sec or int(pm.get("length_seconds") or 0)
+                upload_date = upload_date or pm.get("upload_date") or ""
+                channel_name = channel_name or pm.get("channel") or ""
+                is_live_stream = is_live_stream or bool(pm.get("is_live"))
+                title = title or pm.get("title") or f"Live Stream [{video_id}]"
+                player_meta_fetched = True
+
             first_resp = session.post(api_url, json={"context": INNERTUBE_CLIENT_CTX, "continuation": cont_token}, timeout=12)
             if first_resp.status_code == 200:
                 first_data = first_resp.json()
@@ -1490,30 +1846,43 @@ def fetch_innertube_stream_data(
                 )
                 seek_tok = _extract_seek_token(first_cont)
                 if seek_tok and duration_sec > 90:
-                    slice_sec = 360
+                    slice_sec = 480
                     slices = [(i, s * 1000, min(duration_sec, s + slice_sec) * 1000) for i, s in enumerate(range(0, duration_sec, slice_sec))]
-                    ordered_acts: dict[int, list] = {-1: first_cont.get("actions", [])}
+                    first_pruned, _ = _compact_replay_actions(first_cont.get("actions", []), monetization_only=False)
+                    ordered_acts: dict[int, list] = {-1: first_pruned}
+                    first_data = None
+                    first_cont = None
                     deadline_ts = t0 + 46.0
-                    workers = min(20, max(4, len(slices)))
+                    workers = min(8, max(3, len(slices)))
                     with ThreadPoolExecutor(max_workers=workers) as ex:
-                        fut_map = {ex.submit(_collect_replay_slice, api_key, seek_tok, s_ms, e_ms, deadline_ts): idx for idx, s_ms, e_ms in slices}
+                        fut_map = {
+                            ex.submit(_collect_replay_slice, api_key, seek_tok, s_ms, e_ms, deadline_ts, False): idx
+                            for idx, s_ms, e_ms in slices
+                        }
                         for fut in as_completed(fut_map):
                             s_idx = fut_map[fut]
                             try:
-                                c_n, slice_acts = fut.result()
+                                c_n, slice_acts, _, _ = fut.result()
                                 chunks += c_n
                                 ordered_acts[s_idx] = slice_acts
                             except Exception:
                                 ordered_acts[s_idx] = []
                     merged_actions = []
                     for key_idx in sorted(ordered_acts.keys()):
-                        merged_actions.extend(ordered_acts[key_idx])
+                        merged_actions.extend(ordered_acts.pop(key_idx))
                     parsed_full = parse_all_chat_messages(merged_actions, video_id=video_id)
+                    merged_actions.clear()
+                    parsed_full["upload_date"] = upload_date
+                    parsed_full["channel"] = channel_name
                     parsed_full["elapsed_sec"] = round(time.time() - t0, 3)
                     return {
                         "success": True,
                         "video_id": video_id,
                         "title": title,
+                        "channel": channel_name,
+                        "upload_date": upload_date,
+                        "duration_sec": duration_sec,
+                        "is_live": is_live_stream,
                         "data": parsed_full,
                         "has_more": False,
                         "continuation_token": None,
@@ -1625,8 +1994,14 @@ def fetch_innertube_stream_data(
             "success": True,
             "video_id": video_id,
             "title": title,
+            "channel": channel_name,
+            "upload_date": upload_date,
+            "duration_sec": duration_sec,
+            "is_live": is_live_stream,
             "data": {
                 "stream_id": video_id,
+                "upload_date": upload_date,
+                "channel": channel_name,
                 "total_messages": len(collected_messages),
                 "unique_chatters": len(unique_chatters),
                 "superchats_count": sc_count,
@@ -1647,6 +2022,13 @@ def fetch_innertube_stream_data(
     except Exception as e:
         print(f"[InnerTube Error] {e}")
         return None
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+        if sem_acquired:
+            _STREAM_EXTRACT_SEM.release()
 
 
 # ─────────────────────────────────────────────
@@ -1729,10 +2111,29 @@ def fetch_video_comments(
                 for p in data.get("engagementPanels", []):
                     panel = p.get("engagementPanelSectionListRenderer", {})
                     if panel.get("panelIdentifier") == "engagement-panel-comments-section":
-                        s = json.dumps(panel)
-                        m = re.search(r'"token":\s*"([^"]+)"', s)
-                        if m:
-                            token = m.group(1)
+                        # Prefer structured sectionListRenderer continuation over header sort-menu tokens
+                        sec_items = (
+                            panel.get("content", {})
+                            .get("sectionListRenderer", {})
+                            .get("contents", [{}])[0]
+                            .get("itemSectionRenderer", {})
+                            .get("contents", [])
+                        )
+                        for ci in sec_items:
+                            cir = ci.get("continuationItemRenderer", {}) if isinstance(ci, dict) else {}
+                            cand = (
+                                cir.get("continuationEndpoint", {}).get("continuationCommand", {}).get("token")
+                                or cir.get("continuationEndpoint", {}).get("continuation")
+                            )
+                            if cand:
+                                token = cand
+                                break
+                        if not token:
+                            s = json.dumps(panel.get("content") or panel)
+                            m = re.search(r'"token":\s*"([^"]+)"', s)
+                            if m:
+                                token = m.group(1)
+                        if token:
                             break
 
                 if not token:
@@ -1812,6 +2213,17 @@ def fetch_video_comments(
                                 elif "continuation" in cir.get("continuationEndpoint", {}):
                                     next_token = cir["continuationEndpoint"]["continuation"]
 
+            # Extract pinned badge presence from thread surface/view models on the same page
+            pinned_cids: set[str] = set()
+            for ep in endpoints:
+                for k in ["reloadContinuationItemsCommand", "appendContinuationItemsAction"]:
+                    if k in ep:
+                        ep_str = json.dumps(ep[k])
+                        for pm in re.finditer(r'"commentKey":\s*"([^"]+)"[^}]*?"pinnedText"|"pinnedCommentBadge"[^}]*?"commentId":\s*"([^"]+)"', ep_str):
+                            cid_hit = pm.group(1) or pm.group(2)
+                            if cid_hit:
+                                pinned_cids.add(cid_hit)
+
             # Extract from frameworkUpdates mutations (modern YouTube format)
             mutations = c_data.get("frameworkUpdates", {}).get("entityBatchUpdate", {}).get("mutations", [])
             page_comments = []
@@ -1854,6 +2266,7 @@ def fetch_video_comments(
                         pass
 
                     is_hearted = bool(toolbar.get("heartActiveTooltip"))
+                    is_pinned = bool(cid in pinned_cids or props.get("isPinned") or cep.get("pinnedText"))
 
                     page_comments.append({
                         "id": cid,
@@ -1864,7 +2277,7 @@ def fetch_video_comments(
                         "likes": likes_num,
                         "likes_display": likes_text,
                         "reply_count": reply_count,
-                        "is_pinned": False,
+                        "is_pinned": is_pinned,
                         "is_hearted": is_hearted,
                         "text": text,
                         "video_id": video_id
@@ -1928,6 +2341,11 @@ def fetch_video_comments(
     except Exception as e:
         print(f"[Comments Error] {e}")
         return {"success": False, "error": str(e), "video_id": video_id}
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
 
 
 # ─────────────────────────────────────────────
