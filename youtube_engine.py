@@ -1426,12 +1426,201 @@ def _extract_seek_token(chat_cont: dict) -> Optional[str]:
     return None
 
 
-def _fetch_player_meta(video_id: str, timeout: int = 10, sess: Optional[requests.Session] = None) -> dict:
+def _parse_abs_or_rel_date(text: str) -> str:
+    """Parse absolute YouTube dateText (e.g. 'Streamed live on Nov 23, 2026') or relative text into YYYY-MM-DD."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    if re.match(r'^\d{4}-\d{2}-\d{2}', raw):
+        return raw[:10]
+    cleaned = re.sub(r'^(?:Streamed live on|Premiered on|Premiered|Streamed|Published on)\s+', '', raw, flags=re.I).strip()
+    for fmt in ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    return parse_relative_stream_date(raw)
+
+
+def _parse_duration_text(text: str) -> int:
+    """Convert 'HH:MM:SS' or 'MM:SS' lengthText into seconds."""
+    parts = [p.strip() for p in str(text or "").split(":") if p.strip().isdigit()]
+    if not parts:
+        return 0
+    total = 0
+    for p in parts:
+        total = total * 60 + int(p)
+    return total
+
+
+def _fetch_rss_publish_date(video_id: str, channel_id: str, sess: Optional[requests.Session] = None) -> str:
+    """Fetch exact YYYY-MM-DD publish timestamp from YouTube channel Atom feed (datacenter-friendly)."""
+    if not video_id or not channel_id:
+        return ""
+    try:
+        getter = sess if sess is not None else requests
+        r = getter.get(f"https://www.youtube.com/feeds/videos.xml?channel_id={channel_id}", timeout=4)
+        if r.status_code != 200:
+            return ""
+        m = re.search(rf'<yt:videoId>{re.escape(video_id)}</yt:videoId>.*?<published>(\d{{4}}-\d{{2}}-\d{{2}})', r.text, re.DOTALL)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def _extract_next_video_meta(next_data: dict, video_id: str, sess: Optional[requests.Session] = None, fetch_rss: bool = True) -> dict:
+    """Extract title, channel, channel_id, subscriber_count, view_count & upload_date from InnerTube /next JSON."""
+    out = {"title": "", "channel": "", "channel_id": "", "subscriber_count": 0, "view_count": 0, "upload_date": ""}
+    if not isinstance(next_data, dict):
+        return out
+    contents = (
+        next_data.get("contents", {})
+        .get("twoColumnWatchNextResults", {})
+        .get("results", {})
+        .get("results", {})
+        .get("contents", [])
+    )
+    raw_date_text = ""
+    for item in contents:
+        if not isinstance(item, dict):
+            continue
+        vp = item.get("videoPrimaryInfoRenderer")
+        if isinstance(vp, dict):
+            out["title"] = out["title"] or extract_text_field(vp.get("title"))
+            raw_date_text = extract_text_field(vp.get("dateText")) or extract_text_field(vp.get("relativeDateText")) or raw_date_text
+            vcr = (vp.get("viewCount") or {}).get("videoViewCountRenderer", {}) or {}
+            vc_text = extract_text_field(vcr.get("viewCount"))
+            digits = re.sub(r'[^0-9]', '', vc_text)
+            orig_vc = str(vcr.get("originalViewCount") or "").strip()
+            v1 = int(digits) if digits else 0
+            v2 = int(orig_vc) if orig_vc.isdigit() else 0
+            out["view_count"] = max(out["view_count"], v1, v2)
+        vs = item.get("videoSecondaryInfoRenderer")
+        if isinstance(vs, dict):
+            vo = (vs.get("owner") or {}).get("videoOwnerRenderer", {}) or {}
+            out["channel"] = out["channel"] or extract_text_field(vo.get("title"))
+            out["channel_id"] = out["channel_id"] or str((vo.get("navigationEndpoint") or {}).get("browseEndpoint", {}).get("browseId") or "").strip()
+            sub_txt = extract_text_field(vo.get("subscriberCountText"))
+            if sub_txt and not out["subscriber_count"]:
+                out["subscriber_count"] = parse_yt_number(sub_txt)
+
+    if raw_date_text:
+        is_rel = bool(re.search(r'\b(ago|today|yesterday)\b', raw_date_text, re.I))
+        if not is_rel:
+            out["upload_date"] = _parse_abs_or_rel_date(raw_date_text)
+        else:
+            if fetch_rss and out["channel_id"]:
+                out["upload_date"] = _fetch_rss_publish_date(video_id, out["channel_id"], sess=sess)
+            if not out["upload_date"]:
+                out["upload_date"] = _parse_abs_or_rel_date(raw_date_text)
+    elif fetch_rss and out["channel_id"]:
+        out["upload_date"] = _fetch_rss_publish_date(video_id, out["channel_id"], sess=sess)
+
+    return out
+
+
+def _fetch_search_video_meta(
+    video_id: str,
+    api_key: str = "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F",
+    sess: Optional[requests.Session] = None,
+) -> dict:
+    """Fallback metadata lookup via InnerTube /search (retrieves duration, channel, views without /player)."""
+    if not video_id:
+        return {}
+    try:
+        poster = sess if sess is not None else requests
+        query = f'"{video_id}"' if video_id.startswith("-") else video_id
+        r = poster.post(
+            f"https://www.youtube.com/youtubei/v1/search?key={api_key}",
+            json={"context": INNERTUBE_CLIENT_CTX, "query": query},
+            headers=INNERTUBE_HEADERS,
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+
+        def _find_vr(obj):
+            if isinstance(obj, dict):
+                vr = obj.get("videoRenderer")
+                if isinstance(vr, dict) and vr.get("videoId") == video_id:
+                    return vr
+                for v in obj.values():
+                    res = _find_vr(v)
+                    if res:
+                        return res
+            elif isinstance(obj, list):
+                for v in obj:
+                    res = _find_vr(v)
+                    if res:
+                        return res
+            return None
+
+        vr = _find_vr(data)
+        if not vr:
+            return {}
+        dur_sec = _parse_duration_text(extract_text_field(vr.get("lengthText")))
+        vc_txt = extract_text_field(vr.get("viewCountText"))
+        vc_digits = re.sub(r'[^0-9]', '', vc_txt)
+        thumbs = (vr.get("thumbnail") or {}).get("thumbnails") or []
+        return {
+            "title": extract_text_field(vr.get("title")),
+            "duration_sec": dur_sec,
+            "view_count": int(vc_digits) if vc_digits else 0,
+            "channel": extract_text_field(vr.get("ownerText") or vr.get("longBylineText")),
+            "upload_date": _parse_abs_or_rel_date(extract_text_field(vr.get("publishedTimeText"))),
+            "thumbnail_url": str(thumbs[-1].get("url") or "") if thumbs else "",
+        }
+    except Exception:
+        return {}
+
+
+def _probe_replay_duration_via_seek(
+    api_key: str,
+    seek_tok: str,
+    sess: Optional[requests.Session] = None,
+) -> int:
+    """Clamp playerSeekContinuationData at 24h in 1 InnerTube call to discover exact VOD replay duration when /player is blocked."""
+    if not seek_tok:
+        return 0
+    try:
+        poster = sess if sess is not None else requests
+        r = poster.post(
+            f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}",
+            json={
+                "context": INNERTUBE_CLIENT_CTX,
+                "continuation": seek_tok,
+                "currentPlayerState": {"playerOffsetMs": "86400000"},
+            },
+            headers=INNERTUBE_HEADERS,
+            timeout=8,
+        )
+        if r.status_code != 200:
+            return 0
+        cc = r.json().get("continuationContents", {}) or {}
+        cont = cc.get("liveChatReplayContinuation") or cc.get("liveChatContinuation") or {}
+        max_ms = 0
+        for a in cont.get("actions", []):
+            raw_off = (a.get("replayChatItemAction") or {}).get("videoOffsetTimeMsec")
+            if raw_off is None:
+                continue
+            try:
+                off_val = int(raw_off)
+                if off_val > max_ms:
+                    max_ms = off_val
+            except Exception:
+                pass
+        return max_ms // 1000 if max_ms > 0 else 0
+    except Exception:
+        return 0
+
+
+def _fetch_player_meta(video_id: str, timeout: int = 6, sess: Optional[requests.Session] = None) -> dict:
     """Fetch video duration, title, upload_date, channel, live state, and playability status via InnerTube /player."""
     try:
         poster = sess if sess is not None else requests
         r = poster.post(
-            "https://www.youtube.com/youtubei/v1/player",
+            "https://www.youtube.com/youtubei/v1/player?key=AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F",
             json={"context": INNERTUBE_CLIENT_CTX, "videoId": video_id},
             headers=INNERTUBE_HEADERS,
             timeout=timeout,
@@ -1451,6 +1640,9 @@ def _fetch_player_meta(video_id: str, timeout: int = 10, sess: Optional[requests
             "raw_ps": json.dumps(ps).lower(),
             "title": str(vd.get("title") or "").strip(),
             "channel": str(vd.get("author") or mf.get("ownerChannelName") or "").strip(),
+            "channel_id": str(vd.get("channelId") or mf.get("externalChannelId") or "").strip(),
+            "view_count": int(vd.get("viewCount") or 0),
+            "category": str(mf.get("category") or "").strip(),
             "length_seconds": int(vd.get("lengthSeconds") or 0),
             "upload_date": upload_date,
             "is_live": bool(vd.get("isLive") or lbd.get("isLiveNow")),
@@ -1612,11 +1804,12 @@ def fetch_innertube_stream_data(
         skip_in_chunk = max(0, int(cursor.get("s") or 0)) if cursor else 0
         player_meta: dict = {}
         player_meta_fetched = False
+        next_meta: dict = {}
 
         # 1. Fetch continuation token and metadata via direct InnerTube /next + /player APIs
         if not api_key or not cont_token:
             api_key = api_key or "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
-            player_meta = _fetch_player_meta(video_id, timeout=10, sess=session)
+            player_meta = _fetch_player_meta(video_id, timeout=6, sess=session)
             player_meta_fetched = True
             if not title and player_meta.get("title"):
                 title = player_meta["title"]
@@ -1631,11 +1824,14 @@ def fetch_innertube_stream_data(
                     next_data = next_resp.json()
                     lcr = _find_live_chat_renderer(next_data)
                     cont_token = _extract_lcr_token(lcr)
-                    if not title:
-                        try:
-                            title = next_data.get('contents', {}).get('twoColumnWatchNextResults', {}).get('results', {}).get('results', {}).get('contents', [])[0].get('videoPrimaryInfoRenderer', {}).get('title', {}).get('runs', [])[0].get('text')
-                        except Exception:
-                            pass
+                    next_meta = _extract_next_video_meta(
+                        next_data,
+                        video_id,
+                        sess=session,
+                        fetch_rss=not bool(player_meta.get("upload_date")),
+                    )
+                    if not title and next_meta.get("title"):
+                        title = next_meta["title"]
             except Exception as ex:
                 print(f"[InnerTube Next API Error] {video_id}: {ex}")
 
@@ -1669,8 +1865,8 @@ def fetch_innertube_stream_data(
                     "success": False,
                     "error": "NO_CHAT_AVAILABLE",
                     "title": title,
-                    "channel": player_meta.get("channel") or "",
-                    "upload_date": player_meta.get("upload_date") or "",
+                    "channel": player_meta.get("channel") or next_meta.get("channel") or "",
+                    "upload_date": player_meta.get("upload_date") or next_meta.get("upload_date") or "",
                     "message": (
                         f"Stream '{title}' is scheduled/upcoming and has not aired yet."
                         if player_meta.get("is_upcoming")
@@ -1681,14 +1877,14 @@ def fetch_innertube_stream_data(
                 }
 
         elif not player_meta_fetched and not include_all_chat:
-            player_meta = _fetch_player_meta(video_id, timeout=8, sess=session)
+            player_meta = _fetch_player_meta(video_id, timeout=6, sess=session)
             player_meta_fetched = True
 
-        title = title or player_meta.get("title") or f"Live Stream [{video_id}]"
-        upload_date = player_meta.get("upload_date") or ""
-        channel_name = player_meta.get("channel") or ""
-        duration_sec = int(player_meta.get("length_seconds") or 0)
-        is_live_stream = bool(player_meta.get("is_live"))
+        title = title or player_meta.get("title") or next_meta.get("title") or f"Live Stream [{video_id}]"
+        upload_date = (cursor.get("dt") if cursor else "") or player_meta.get("upload_date") or next_meta.get("upload_date") or ""
+        channel_name = (cursor.get("ch") if cursor else "") or player_meta.get("channel") or next_meta.get("channel") or ""
+        duration_sec = int((cursor.get("dur") if cursor else 0) or player_meta.get("length_seconds") or 0)
+        is_live_stream = bool((cursor.get("live") if cursor else False) or player_meta.get("is_live"))
 
         is_live_token = str(cont_token).startswith("0of")
         api_url = (
@@ -1700,7 +1896,7 @@ def fetch_innertube_stream_data(
         # Fast path A: Monetization Audit (/analyze-stream) - full stream events aggregation
         if not include_all_chat:
             if not duration_sec and not player_meta_fetched:
-                pm = _fetch_player_meta(video_id, timeout=8, sess=session)
+                pm = _fetch_player_meta(video_id, timeout=6, sess=session)
                 duration_sec = int(pm.get("length_seconds") or 0)
                 upload_date = upload_date or pm.get("upload_date") or ""
                 channel_name = channel_name or pm.get("channel") or ""
@@ -1735,6 +1931,15 @@ def fetch_innertube_stream_data(
                 first_data = None
                 first_cont = None
 
+                # Datacenter resilience: when /player is blocked, recover exact replay duration in 1 clamped seek call
+                if seek_tok and duration_sec <= 0 and "get_live_chat_replay" in api_url:
+                    duration_sec = _probe_replay_duration_via_seek(api_key, seek_tok, sess=session)
+                if duration_sec <= 0 and "get_live_chat_replay" in api_url:
+                    s_meta = _fetch_search_video_meta(video_id, api_key=api_key, sess=session)
+                    duration_sec = int(s_meta.get("duration_sec") or 0)
+                    channel_name = channel_name or s_meta.get("channel") or ""
+                    upload_date = upload_date or s_meta.get("upload_date") or ""
+
                 # Parallel Time-Sliced Extraction for replay streams > 90s when seek continuation exists
                 if seek_tok and duration_sec > 90 and "get_live_chat_replay" in api_url:
                     slice_sec = 480
@@ -1762,7 +1967,7 @@ def fetch_innertube_stream_data(
                     # Sequential walk (short streams, streams without seek, or active live streams)
                     cur = next_tok
                     seq_max_chunks = 35 if "get_live_chat?" in api_url else 1800
-                    seq_deadline = t0 + (20.0 if "get_live_chat?" in api_url else 45.0)
+                    seq_deadline = t0 + (20.0 if "get_live_chat?" in api_url else 70.0)
                     while cur and cur not in seen and chunks < seq_max_chunks and time.time() < seq_deadline:
                         seen.add(cur)
                         chunks += 1
@@ -1783,6 +1988,8 @@ def fetch_innertube_stream_data(
                         if pruned:
                             all_actions.extend(pruned)
                         cur = _extract_next_chat_token(chat_cont)
+                    if cur and cur not in seen and "get_live_chat_replay" in api_url:
+                        partial_slices += 1
 
             if not all_actions and not all_chatter_authors:
                 return None
@@ -1828,7 +2035,7 @@ def fetch_innertube_stream_data(
         # If unlimited full chat export requested on initial call, check if parallel slicing applies
         if limit is None and not continuation_token and not is_live_token:
             if not player_meta_fetched:
-                pm = _fetch_player_meta(video_id, timeout=8, sess=session)
+                pm = _fetch_player_meta(video_id, timeout=6, sess=session)
                 duration_sec = duration_sec or int(pm.get("length_seconds") or 0)
                 upload_date = upload_date or pm.get("upload_date") or ""
                 channel_name = channel_name or pm.get("channel") or ""
@@ -1845,6 +2052,8 @@ def fetch_innertube_stream_data(
                     or {}
                 )
                 seek_tok = _extract_seek_token(first_cont)
+                if seek_tok and duration_sec <= 0:
+                    duration_sec = _probe_replay_duration_via_seek(api_key, seek_tok, sess=session)
                 if seek_tok and duration_sec > 90:
                     slice_sec = 480
                     slices = [(i, s * 1000, min(duration_sec, s + slice_sec) * 1000) for i, s in enumerate(range(0, duration_sec, slice_sec))]
@@ -1891,15 +2100,22 @@ def fetch_innertube_stream_data(
                         "elapsed_sec": round(time.time() - t0, 2)
                     }
 
+        def _pack_chat_cursor(tok: str, skip: int) -> str:
+            return _encode_cursor("cta1:", {
+                "t": tok,
+                "s": skip,
+                "k": api_key,
+                "title": title,
+                "ch": channel_name,
+                "dt": upload_date,
+                "dur": duration_sec,
+                "live": is_live_stream,
+            })
+
         while cont_token and cont_token not in seen_tokens and chunks < max_chunks:
             if chunks > 0 and (time.time() - t0) > soft_time_limit and len(collected_messages) > 0:
                 has_more = True
-                next_cursor = _encode_cursor("cta1:", {
-                    "t": cont_token,
-                    "s": skip_in_chunk,
-                    "k": api_key,
-                    "title": title,
-                })
+                next_cursor = _pack_chat_cursor(cont_token, skip_in_chunk)
                 break
 
             seen_tokens.add(cont_token)
@@ -1939,12 +2155,7 @@ def fetch_innertube_stream_data(
                     continue
                 if limit is not None and len(collected_messages) >= limit:
                     has_more = True
-                    next_cursor = _encode_cursor("cta1:", {
-                        "t": current_chunk_token,
-                        "s": skip_in_chunk + offset_j,
-                        "k": api_key,
-                        "title": title,
-                    })
+                    next_cursor = _pack_chat_cursor(current_chunk_token, skip_in_chunk + offset_j)
                     hit_limit_mid_chunk = True
                     break
 
@@ -1971,12 +2182,7 @@ def fetch_innertube_stream_data(
             skip_in_chunk = 0
             if limit is not None and len(collected_messages) >= limit and next_token:
                 has_more = True
-                next_cursor = _encode_cursor("cta1:", {
-                    "t": next_token,
-                    "s": 0,
-                    "k": api_key,
-                    "title": title,
-                })
+                next_cursor = _pack_chat_cursor(next_token, 0)
                 break
 
             cont_token = next_token
@@ -2451,6 +2657,132 @@ def parse_yt_number(s: str) -> int:
         return 0
 
 
+def _build_video_metadata_dict(
+    v_id: str,
+    raw_input: str,
+    title: str,
+    duration_sec: int,
+    views: int,
+    channel: str,
+    channel_id: str,
+    subs: int,
+    category_raw: str,
+    tags_list: list,
+    thumbnail: str,
+    upload_date: str,
+) -> dict:
+    """Format normalized video metadata response dict for AdSense & UI consumers."""
+    is_short = (duration_sec > 0 and duration_sec <= 60) or ("/shorts/" in raw_input.lower())
+
+    if is_short:
+        format_type = "shorts"
+        format_label = "YouTube Shorts (<60s)"
+        midroll_eligible = False
+    elif duration_sec < 480:
+        format_type = "under_8m"
+        format_label = "Standard Video (<8 min)"
+        midroll_eligible = False
+    elif duration_sec < 900:
+        format_type = "midroll_8_15m"
+        format_label = "Mid-Roll Enabled (8–15 min)"
+        midroll_eligible = True
+    elif duration_sec < 1800:
+        format_type = "extended_15_30m"
+        format_label = "Extended Video (15–30 min)"
+        midroll_eligible = True
+    else:
+        format_type = "stream_30m_plus"
+        format_label = "Long Video / Stream (30+ min)"
+        midroll_eligible = True
+
+    detected_niche = detect_niche(category=category_raw, title=title, tags=tags_list)
+    m, s = divmod(max(0, duration_sec), 60)
+    h, m = divmod(m, 60)
+    dur_formatted = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
+
+    return {
+        "success": True,
+        "video_id": v_id,
+        "title": title or "YouTube Video",
+        "duration_sec": duration_sec,
+        "duration_formatted": dur_formatted,
+        "view_count": views,
+        "channel_title": channel,
+        "channel_id": channel_id,
+        "subscriber_count": subs,
+        "is_short": is_short,
+        "format_type": format_type,
+        "format_label": format_label,
+        "midroll_eligible": midroll_eligible,
+        "detected_niche": detected_niche,
+        "thumbnail_url": thumbnail or f"https://i.ytimg.com/vi/{v_id}/hqdefault.jpg",
+        "upload_date": upload_date,
+        "category": category_raw,
+    }
+
+
+def _fetch_video_metadata_innertube(vid: str, raw_input: str) -> Optional[dict]:
+    """Datacenter-safe InnerTube metadata lookup combining /player, /next, RSS, and /search."""
+    sess = requests.Session()
+    sess.headers.update(INNERTUBE_HEADERS)
+    try:
+        pm = _fetch_player_meta(vid, timeout=6, sess=sess)
+        next_meta: dict = {}
+        try:
+            nr = sess.post(
+                "https://www.youtube.com/youtubei/v1/next",
+                json={"context": INNERTUBE_CLIENT_CTX, "videoId": vid},
+                timeout=10,
+            )
+            if nr.status_code == 200:
+                next_meta = _extract_next_video_meta(nr.json(), vid, sess=sess, fetch_rss=not bool(pm.get("upload_date")))
+        except Exception:
+            pass
+
+        title = pm.get("title") or next_meta.get("title") or ""
+        channel = pm.get("channel") or next_meta.get("channel") or ""
+        channel_id = pm.get("channel_id") or next_meta.get("channel_id") or ""
+        duration_sec = int(pm.get("length_seconds") or 0)
+        views = max(int(pm.get("view_count") or 0), int(next_meta.get("view_count") or 0))
+        subs = int(next_meta.get("subscriber_count") or 0)
+        upload_date = pm.get("upload_date") or next_meta.get("upload_date") or ""
+        thumbnail = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+
+        if duration_sec <= 0 or not title:
+            sm = _fetch_search_video_meta(vid, sess=sess)
+            title = title or sm.get("title") or ""
+            channel = channel or sm.get("channel") or ""
+            duration_sec = duration_sec or int(sm.get("duration_sec") or 0)
+            views = max(views, int(sm.get("view_count") or 0))
+            upload_date = upload_date or sm.get("upload_date") or ""
+            thumbnail = sm.get("thumbnail_url") or thumbnail
+
+        if not title and duration_sec <= 0 and views <= 0:
+            return None
+
+        return _build_video_metadata_dict(
+            v_id=vid,
+            raw_input=raw_input,
+            title=title,
+            duration_sec=duration_sec,
+            views=views,
+            channel=channel,
+            channel_id=channel_id,
+            subs=subs,
+            category_raw=pm.get("category") or "",
+            tags_list=[],
+            thumbnail=thumbnail,
+            upload_date=upload_date,
+        )
+    except Exception:
+        return None
+    finally:
+        try:
+            sess.close()
+        except Exception:
+            pass
+
+
 def get_video_metadata(video_url_or_id: str) -> dict:
     """
     Fetches comprehensive YouTube video metadata required for AdSense Revenue calculation:
@@ -2462,6 +2794,10 @@ def get_video_metadata(video_url_or_id: str) -> dict:
     if not vid:
         return {"success": False, "error": "Invalid YouTube URL or Video ID"}
 
+    it_meta = _fetch_video_metadata_innertube(vid, video_url_or_id)
+    if it_meta and it_meta.get("title") and (it_meta.get("duration_sec", 0) > 0 or it_meta.get("view_count", 0) > 0):
+        return it_meta
+
     url = f"https://www.youtube.com/watch?v={vid}"
     cmd = ["yt-dlp"] + get_cookie_arg() + [
         "--skip-download",
@@ -2470,19 +2806,23 @@ def get_video_metadata(video_url_or_id: str) -> dict:
     ]
 
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=20)
+        res = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=15)
         lines = [line.strip() for line in res.stdout.strip().splitlines() if line.strip()]
         if not lines:
+            if it_meta:
+                return it_meta
             return {"success": False, "error": "Could not extract video metadata", "video_id": vid}
 
         last_line = lines[-1]
         parts = last_line.split("\t")
         if len(parts) < 5:
+            if it_meta:
+                return it_meta
             return {"success": False, "error": "Incomplete video metadata", "video_id": vid}
 
         v_id = parts[0].strip() or vid
         title = parts[1].strip() if len(parts) > 1 else "YouTube Video"
-        
+
         duration_sec = 0
         try:
             duration_sec = int(float(parts[2].strip())) if len(parts) > 2 and parts[2].strip() != "NA" else 0
@@ -2497,7 +2837,7 @@ def get_video_metadata(video_url_or_id: str) -> dict:
 
         channel = parts[4].strip() if len(parts) > 4 else ""
         channel_id = parts[5].strip() if len(parts) > 5 else ""
-        
+
         subs = 0
         try:
             subs = int(parts[6].strip()) if len(parts) > 6 and parts[6].strip() != "NA" else 0
@@ -2509,32 +2849,6 @@ def get_video_metadata(video_url_or_id: str) -> dict:
         thumbnail = parts[9].strip() if len(parts) > 9 else f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
         upload_date = parts[10].strip() if len(parts) > 10 else ""
 
-        # Format classification
-        # Shorts: duration <= 60s or url contains /shorts/
-        is_short = (duration_sec > 0 and duration_sec <= 60) or ("/shorts/" in video_url_or_id.lower())
-        
-        if is_short:
-            format_type = "shorts"
-            format_label = "YouTube Shorts (<60s)"
-            midroll_eligible = False
-        elif duration_sec < 480: # Under 8 minutes
-            format_type = "under_8m"
-            format_label = "Standard Video (<8 min)"
-            midroll_eligible = False
-        elif duration_sec < 900: # 8 to 15 minutes
-            format_type = "midroll_8_15m"
-            format_label = "Mid-Roll Enabled (8–15 min)"
-            midroll_eligible = True
-        elif duration_sec < 1800: # 15 to 30 minutes
-            format_type = "extended_15_30m"
-            format_label = "Extended Video (15–30 min)"
-            midroll_eligible = True
-        else: # 30 min+ / Stream replay
-            format_type = "stream_30m_plus"
-            format_label = "Long Video / Stream (30+ min)"
-            midroll_eligible = True
-
-        # Parse tags
         tags_list = []
         try:
             if tags_raw.startswith("[") and tags_raw.endswith("]"):
@@ -2542,34 +2856,24 @@ def get_video_metadata(video_url_or_id: str) -> dict:
         except Exception:
             tags_list = [t.strip() for t in tags_raw.split(",") if t.strip()]
 
-        detected_niche = detect_niche(category=category_raw, title=title, tags=tags_list)
-
-        # Duration formatted
-        m, s = divmod(duration_sec, 60)
-        h, m = divmod(m, 60)
-        dur_formatted = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
-
-        return {
-            "success": True,
-            "video_id": v_id,
-            "title": title,
-            "duration_sec": duration_sec,
-            "duration_formatted": dur_formatted,
-            "view_count": views,
-            "channel_title": channel,
-            "channel_id": channel_id,
-            "subscriber_count": subs,
-            "is_short": is_short,
-            "format_type": format_type,
-            "format_label": format_label,
-            "midroll_eligible": midroll_eligible,
-            "detected_niche": detected_niche,
-            "thumbnail_url": thumbnail,
-            "upload_date": upload_date,
-            "category": category_raw
-        }
+        return _build_video_metadata_dict(
+            v_id=v_id,
+            raw_input=video_url_or_id,
+            title=title,
+            duration_sec=duration_sec,
+            views=views,
+            channel=channel,
+            channel_id=channel_id,
+            subs=subs,
+            category_raw=category_raw,
+            tags_list=tags_list,
+            thumbnail=thumbnail,
+            upload_date=upload_date,
+        )
 
     except Exception as e:
+        if it_meta:
+            return it_meta
         print(f"[Video Metadata Error] {e}")
         return {"success": False, "error": str(e), "video_id": vid}
 
