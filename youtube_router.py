@@ -137,13 +137,13 @@ def frozen_ytdlp_analyze_stream(vid: str, stream_title: Optional[str] = None, in
         ]
 
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=50)
         except subprocess.TimeoutExpired:
             return {
                 "success": False,
                 "error": "TIMEOUT",
                 "title": stream_title,
-                "message": f"Downloading chat for '{stream_title}' took longer than 3 minutes. Please check your connection or try again.",
+                "message": f"Downloading chat for '{stream_title}' took longer than 50s on fallback. Please try again.",
                 "video_id": vid,
                 "engine": "frozen_ytdlp_fallback"
             }

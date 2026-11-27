@@ -19,6 +19,7 @@ import urllib.parse
 import http.cookiejar
 import requests
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
 from pathlib import Path
@@ -62,31 +63,66 @@ CURRENCY_RATES_TO_INR: dict[str, float] = {
     "IDR": 0.0055,
     "THB": 2.45,
     "VND": 0.0034,
+    "CHF": 98.50,
+    "SEK": 8.15,
+    "NOK": 7.95,
+    "DKK": 12.60,
+    "ZAR": 4.80,
+    "MYR": 19.60,
+    "CLP": 0.090,
+    "COP": 0.020,
+    "ARS": 0.086,
+    "PEN": 23.20,
+    "CNY": 12.00,
+    "HUF": 0.23,
+    "CZK": 3.70,
+    "ILS": 23.50,
+    "UAH": 2.10,
+    "NGN": 0.052,
+    "RON": 18.90,
+    "KES": 0.67,
+    "EGP": 1.75,
+    "QAR": 23.85,
 }
 
+ZERO_DECIMAL_CURRENCIES: set[str] = {"JPY", "KRW", "IDR", "VND", "CLP", "COP", "HUF", "TWD"}
+
 SYMBOL_TO_CURRENCY: list[tuple[str, str]] = sorted([
-    ("Mex$", "MXN"),
-    ("US$", "USD"), ("CA$", "CAD"), ("C$", "CAD"),
-    ("AU$", "AUD"), ("A$", "AUD"),
-    ("NZ$", "NZD"), ("HK$", "HKD"), ("NT$", "TWD"),
-    ("SG$", "SGD"), ("S$", "SGD"),
-    ("R$", "BRL"),
-    ("Rs.", "PKR"), ("PKR", "PKR"),
-    ("BDT", "BDT"), ("৳", "BDT"),
-    ("AED", "AED"), ("SAR", "SAR"),
-    ("PHP", "PHP"), ("₱", "PHP"),
-    ("JP¥", "JPY"), ("JPY", "JPY"), ("¥", "JPY"),
-    ("KRW", "KRW"), ("₩", "KRW"),
-    ("EUR", "EUR"), ("€", "EUR"),
-    ("GBP", "GBP"), ("£", "GBP"),
-    ("INR", "INR"), ("₹", "INR"), ("Rs", "INR"),
-    ("$", "USD"),   ("USD", "USD"),
-    ("zł", "PLN"),  ("PLN", "PLN"),
-    ("₺", "TRY"),   ("TRY", "TRY"),
-    ("₽", "RUB"),   ("RUB", "RUB"),
-    ("IDR", "IDR"), ("Rp", "IDR"),
-    ("THB", "THB"), ("฿", "THB"),
-    ("VND", "VND"), ("₫", "VND")
+    ("Mex$", "MXN"), ("MX$", "MXN"), ("MXN", "MXN"),
+    ("COL$", "COP"), ("COP", "COP"),
+    ("CL$", "CLP"),  ("CLP", "CLP"),
+    ("AR$", "ARS"),  ("ARS", "ARS"),
+    ("US$", "USD"),  ("CA$", "CAD"), ("C$", "CAD"),
+    ("AU$", "AUD"),  ("A$", "AUD"),
+    ("NZ$", "NZD"),  ("HK$", "HKD"), ("NT$", "TWD"),
+    ("SG$", "SGD"),  ("S$", "SGD"),
+    ("CN¥", "CNY"),  ("CNY", "CNY"),
+    ("R$", "BRL"),   ("BRL", "BRL"),
+    ("PKR", "PKR"),
+    ("BDT", "BDT"),  ("৳", "BDT"),
+    ("AED", "AED"),  ("SAR", "SAR"), ("QAR", "QAR"),
+    ("CHF", "CHF"),  ("SEK", "SEK"), ("NOK", "NOK"), ("DKK", "DKK"),
+    ("ZAR", "ZAR"),  ("MYR", "MYR"), ("RM", "MYR"),
+    ("PEN", "PEN"),  ("S/", "PEN"),
+    ("HUF", "HUF"),  ("Ft", "HUF"),
+    ("CZK", "CZK"),  ("Kč", "CZK"),
+    ("ILS", "ILS"),  ("₪", "ILS"),
+    ("UAH", "UAH"),  ("₴", "UAH"),
+    ("NGN", "NGN"),  ("₦", "NGN"),
+    ("RON", "RON"),  ("KES", "KES"), ("EGP", "EGP"),
+    ("PHP", "PHP"),  ("₱", "PHP"),
+    ("JP¥", "JPY"),  ("JPY", "JPY"), ("¥", "JPY"),
+    ("KRW", "KRW"),  ("₩", "KRW"),
+    ("EUR", "EUR"),  ("€", "EUR"),
+    ("GBP", "GBP"),  ("£", "GBP"),
+    ("INR", "INR"),  ("₹", "INR"),  ("Rs.", "INR"), ("Rs", "INR"),
+    ("$", "USD"),    ("USD", "USD"),
+    ("zł", "PLN"),   ("PLN", "PLN"),
+    ("₺", "TRY"),    ("TRY", "TRY"),
+    ("₽", "RUB"),    ("RUB", "RUB"),
+    ("IDR", "IDR"),  ("Rp", "IDR"),
+    ("THB", "THB"),  ("฿", "THB"),
+    ("VND", "VND"),  ("₫", "VND")
 ], key=lambda x: len(x[0]), reverse=True)
 
 
@@ -156,19 +192,40 @@ def extract_video_id(url_or_id: str) -> str:
     return m.group(1) if m else url
 
 
+def _format_offset_ms(video_offset_time) -> str:
+    """Format replayChatItemAction.videoOffsetTimeMsec cleanly (including negative pre-stream offsets)."""
+    if video_offset_time is None or video_offset_time == "":
+        return ""
+    try:
+        secs = int(video_offset_time) // 1000
+        sign = "-" if secs < 0 else ""
+        abs_secs = abs(secs)
+        m, s = divmod(abs_secs, 60)
+        h, m = divmod(m, 60)
+        return f"{sign}{h}:{m:02d}:{s:02d}" if h > 0 else f"{sign}{m}:{s:02d}"
+    except Exception:
+        return ""
+
+
 def parse_amount(text: str) -> tuple[float, str]:
-    """Parse amount and currency symbol from string (e.g. '₹101.00', '$1.99', 'CA$ 5.00', 'R$ 10,00')."""
+    """Parse amount and currency symbol from string (e.g. '₹101.00', '$1.99', 'CA$ 5.00', 'R$ 10,00', 'IDR 10.000')."""
     if not text:
         return 0.0, "INR"
-    
+
+    clean_text = text.replace("\xa0", " ").strip()
     currency = "INR"
+    matched_sym = ""
     for sym, curr in SYMBOL_TO_CURRENCY:
-        if sym in text:
+        if sym in clean_text:
             currency = curr
+            matched_sym = sym
             break
 
-    # Handle comma as decimal or thousand separator safely
-    clean = re.sub(r'[^0-9.,]', '', text).strip()
+    if matched_sym:
+        clean_text = clean_text.replace(matched_sym, " ")
+
+    # Handle comma/dot decimal vs thousand separators safely
+    clean = re.sub(r'[^0-9.,]', '', clean_text).strip('.,')
     if ',' in clean and '.' in clean:
         if clean.rfind(',') > clean.rfind('.'):
             clean = clean.replace('.', '').replace(',', '.')
@@ -180,6 +237,12 @@ def parse_amount(text: str) -> tuple[float, str]:
             clean = parts[0] + '.' + parts[1]
         else:
             clean = clean.replace(',', '')
+    elif '.' in clean and ',' not in clean:
+        parts = clean.split('.')
+        if len(parts) > 2 or (len(parts) == 2 and len(parts[1]) == 3 and (currency in ZERO_DECIMAL_CURRENCIES or len(parts[0]) >= 1)):
+            # Treat e.g. '10.000' or '1.000.000' (IDR/CLP/COP/VND/EUR thousands) as integer separator when 3 trailing digits
+            if len(parts) > 2 or currency in ZERO_DECIMAL_CURRENCIES:
+                clean = clean.replace('.', '')
 
     try:
         val = float(clean)
@@ -201,13 +264,67 @@ def get_cookie_arg() -> list[str]:
 # CORE CHAT & STREAM PARSER
 # ─────────────────────────────────────────────
 
+def _parse_gift_message_vm(vm: dict) -> tuple[str, str, int, int]:
+    """Parse both legacy ('comboed xN Gift for M Jewels') and 2026 ('sent GiftName') giftMessageViewModel formats."""
+    text = extract_text_field(vm.get("text"))
+    author = extract_text_field(vm.get("authorName"))
+    a11y = str(vm.get("giftImageA11yLabel") or "").strip()
+    if not author and " sent a gift" in a11y:
+        author = a11y.split(" sent a gift", 1)[0].strip()
+    author = author or "Gift Supporter"
+
+    m_legacy = re.search(r"comboed x(\d+) (.+?) for (\d+) Jewels", text)
+    if m_legacy:
+        return author, m_legacy.group(2).strip(), int(m_legacy.group(1)), int(m_legacy.group(3))
+
+    qty = 1
+    gname = ""
+    jewels_amt = 0
+
+    m_sent = re.search(r"(?:sent|gifted)\s+(?:x(\d+)\s+)?(.+?)(?:\s+for\s+(\d+)\s+Jewels)?$", text, re.IGNORECASE)
+    if m_sent:
+        if m_sent.group(1):
+            qty = int(m_sent.group(1))
+        gname = m_sent.group(2).strip()
+        if m_sent.group(3):
+            jewels_amt = int(m_sent.group(3))
+    elif "sent a gift," in a11y:
+        gname = a11y.split("sent a gift,", 1)[1].strip()
+    elif text:
+        gname = text.strip()
+
+    return author, (gname or "Virtual Gift"), qty, jewels_amt
+
+
+def _offset_to_seconds(t_str: str) -> float:
+    """Convert 'H:MM:SS' or 'MM:SS' (including negative) to seconds for chronological sorting."""
+    if not t_str:
+        return 1e12
+    s = str(t_str).strip()
+    neg = s.startswith("-")
+    if neg:
+        s = s[1:]
+    parts = s.split(":")
+    try:
+        nums = [int(p) for p in parts]
+        if len(nums) == 2:
+            val = nums[0] * 60 + nums[1]
+        elif len(nums) == 3:
+            val = nums[0] * 3600 + nums[1] * 60 + nums[2]
+        else:
+            return 1e12
+        return float(-val if neg else val)
+    except Exception:
+        return 1e12
+
+
 def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
     """
     Parses live chat JSON lines (from file or memory), deduplicating actions by item ID.
     Extracts:
-    - Superchats & Super Stickers (real revenue values)
+    - Superchats & Super Stickers (real revenue values, skipping ticker/banner duplicates)
     - Memberships (Dynamic Tiers + Milestones/Tenure duration)
-    - YouTube Jewels Gifts
+    - YouTube Jewels Gifts (both legacy comboed and 2026 sent-gift formats)
     """
     seen_ids = set()
     superchats = []
@@ -223,29 +340,40 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
     total_jewels_inr = 0.0
     total_mem_inr = 0.0
 
-    def walk_tree(obj):
+    def walk_tree(obj, time_offset: str = ""):
         nonlocal total_sc_inr, total_jewels_count, total_jewels_inr, total_mem_inr
         if not isinstance(obj, dict):
+            return
+
+        # Extract timestamp from replayChatItemAction wrapper when child lacks timestampText
+        if "replayChatItemAction" in obj:
+            act = obj["replayChatItemAction"]
+            off_str = _format_offset_ms(act.get("videoOffsetTimeMsec")) or time_offset
+            for a in act.get("actions", []):
+                if isinstance(a, dict):
+                    walk_tree(a, off_str)
+            return
+
+        # Skip ticker & pinned banner overlays — they duplicate addChatItemAction events
+        if "addLiveChatTickerItemAction" in obj or "addBannerToLiveChatCommand" in obj:
             return
 
         # ── 1. Superchats (Paid Message) ──
         if 'liveChatPaidMessageRenderer' in obj:
             sc = obj['liveChatPaidMessageRenderer']
-            sc_id = sc.get('id')
-            if not sc_id or sc_id not in seen_ids:
-                if sc_id:
-                    seen_ids.add(sc_id)
-                author = extract_text_field(sc.get('authorName')) or "Unknown"
-                amt_text = extract_text_field(sc.get('purchaseAmountText'))
+            author = extract_text_field(sc.get('authorName')) or "Unknown"
+            amt_text = extract_text_field(sc.get('purchaseAmountText'))
+            msg = extract_text_field(sc.get('message'))
+            time_text = extract_text_field(sc.get('timestampText')) or time_offset
+            sc_id = sc.get('id') or f"fp_sc:{author}:{amt_text}:{time_text}:{msg}"
+            if sc_id not in seen_ids:
+                seen_ids.add(sc_id)
                 amt, curr = parse_amount(amt_text)
                 rate = CURRENCY_RATES_TO_INR.get(curr, 1.0)
                 amt_inr = round(amt * rate, 2)
 
-                msg = extract_text_field(sc.get('message'))
-                time_text = extract_text_field(sc.get('timestampText'))
-
                 superchats.append({
-                    "id": sc_id or "",
+                    "id": sc.get('id') or "",
                     "author": author,
                     "amount": amt,
                     "currency": curr,
@@ -264,19 +392,18 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
         # ── 2. Super Stickers (Paid Sticker — Real Money!) ──
         if 'liveChatPaidStickerRenderer' in obj:
             st = obj['liveChatPaidStickerRenderer']
-            st_id = st.get('id')
-            if not st_id or st_id not in seen_ids:
-                if st_id:
-                    seen_ids.add(st_id)
-                author = extract_text_field(st.get('authorName')) or "Unknown"
-                amt_text = extract_text_field(st.get('purchaseAmountText'))
+            author = extract_text_field(st.get('authorName')) or "Unknown"
+            amt_text = extract_text_field(st.get('purchaseAmountText'))
+            time_text = extract_text_field(st.get('timestampText')) or time_offset
+            st_id = st.get('id') or f"fp_st:{author}:{amt_text}:{time_text}"
+            if st_id not in seen_ids:
+                seen_ids.add(st_id)
                 amt, curr = parse_amount(amt_text)
                 rate = CURRENCY_RATES_TO_INR.get(curr, 1.0)
                 amt_inr = round(amt * rate, 2)
-                time_text = extract_text_field(st.get('timestampText'))
 
                 superchats.append({
-                    "id": st_id or "",
+                    "id": st.get('id') or "",
                     "author": author,
                     "amount": amt,
                     "currency": curr,
@@ -295,14 +422,13 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
         # ── 3. Memberships (Dynamic Custom Tier Detection) ──
         if 'liveChatMembershipItemRenderer' in obj:
             mem = obj['liveChatMembershipItemRenderer']
-            mem_id = mem.get('id')
-            if not mem_id or mem_id not in seen_ids:
-                if mem_id:
-                    seen_ids.add(mem_id)
-
-                author = extract_text_field(mem.get('authorName')) or "Unknown"
-                sub_text = extract_text_field(mem.get('headerSubtext'))
-                pri_text = extract_text_field(mem.get('headerPrimaryText'))
+            author = extract_text_field(mem.get('authorName')) or "Unknown"
+            sub_text = extract_text_field(mem.get('headerSubtext'))
+            pri_text = extract_text_field(mem.get('headerPrimaryText'))
+            time_text = extract_text_field(mem.get('timestampText')) or time_offset
+            mem_id = mem.get('id') or f"fp_mem:{author}:{sub_text}:{pri_text}:{time_text}"
+            if mem_id not in seen_ids:
+                seen_ids.add(mem_id)
 
                 tier = "General Member"
                 m_type = "Member"
@@ -310,7 +436,6 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
                 est_price = 59.0
 
                 if 'welcome to' in sub_text.lower():
-                    # New member join e.g. "Welcome to Duggu’s world 🐥!"
                     tier = re.sub(r'(?i)welcome to\s*', '', sub_text).rstrip('!').strip()
                     m_type = "New Join"
                     custom_tiers_discovered.add(tier)
@@ -320,7 +445,6 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
                     custom_tiers_discovered.add(tier)
                     est_price = 299.0
                 elif sub_text:
-                    # Milestone renewal e.g. sub_text = "Duggu’s world 🐥", pri_text = "Member for 22 months"
                     tier = sub_text.strip()
                     tenure = pri_text
                     m_type = "Milestone / Renewal"
@@ -331,12 +455,13 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
                     m_type = f"Milestone ({pri_text})"
 
                 memberships.append({
-                    "id": mem_id or "",
+                    "id": mem.get('id') or "",
                     "author": author,
                     "type": m_type,
                     "tier": tier,
                     "tenure": tenure,
                     "price_inr": est_price,
+                    "time": time_text,
                     "stream_id": video_id
                 })
                 total_mem_inr += est_price
@@ -346,15 +471,13 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
         # ── 4. Gifted Memberships Purchase ──
         if 'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer' in obj:
             gift = obj['liveChatSponsorshipsGiftPurchaseAnnouncementRenderer']
-            g_id = gift.get('id')
-            if not g_id or g_id not in seen_ids:
-                if g_id:
-                    seen_ids.add(g_id)
+            header = gift.get('header', {}).get('liveChatSponsorshipsHeaderRenderer', {})
+            author = extract_text_field(header.get('authorName')) or "Unknown"
+            pri = extract_text_field(header.get('primaryText'))
+            g_id = gift.get('id') or f"fp_gift:{author}:{pri}:{time_offset}"
+            if g_id not in seen_ids:
+                seen_ids.add(g_id)
 
-                header = gift.get('header', {}).get('liveChatSponsorshipsHeaderRenderer', {})
-                author = extract_text_field(header.get('authorName')) or "Unknown"
-                pri = extract_text_field(header.get('primaryText'))
-                
                 gift_count = 1
                 m_count = re.search(r'\b(\d+)\b', pri)
                 if m_count:
@@ -362,12 +485,13 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
 
                 est_gift_val = gift_count * 59.0
                 memberships.append({
-                    "id": g_id or "",
+                    "id": gift.get('id') or "",
                     "author": author,
                     "type": f"Gifted ({gift_count})",
                     "tier": f"{gift_count} Memberships Gifted",
                     "tenure": pri,
                     "price_inr": est_gift_val,
+                    "time": time_offset,
                     "stream_id": video_id
                 })
                 total_mem_inr += est_gift_val
@@ -377,13 +501,10 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
         # ── 5. YouTube Jewels Gifts ──
         if 'giftMessageViewModel' in obj:
             vm = obj['giftMessageViewModel']
-            text = extract_text_field(vm.get('text'))
-            m = re.search(r"comboed x(\d+) (.+?) for (\d+) Jewels", text)
-            if m:
-                qty = int(m.group(1))
-                gname = m.group(2).strip()
-                jewels_amt = int(m.group(3))
-                author = extract_text_field(vm.get('authorName')) or "Unknown"
+            author, gname, qty, jewels_amt = _parse_gift_message_vm(vm)
+            j_id = vm.get('id') or f"fp_jwl:{author}:{gname}:{qty}:{jewels_amt}:{time_offset}"
+            if j_id not in seen_ids and gname:
+                seen_ids.add(j_id)
                 inr_val = round(jewels_amt * INR_PER_JEWEL, 2)
 
                 jewels.append({
@@ -392,6 +513,7 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
                     "quantity": qty,
                     "jewels": jewels_amt,
                     "inr_value": inr_val,
+                    "time": time_offset,
                     "stream_id": video_id
                 })
                 total_jewels_count += jewels_amt
@@ -402,17 +524,20 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
         # Recurse children
         for v in obj.values():
             if isinstance(v, dict):
-                walk_tree(v)
+                walk_tree(v, time_offset)
             elif isinstance(v, list):
                 for item in v:
                     if isinstance(item, dict):
-                        walk_tree(item)
+                        walk_tree(item, time_offset)
 
     # Process all lines
     for line in json_lines:
         if isinstance(line, bytes):
             line = line.decode('utf-8', errors='ignore')
-        line = line.strip()
+        if isinstance(line, dict):
+            walk_tree(line)
+            continue
+        line = str(line).strip()
         if not line:
             continue
 
@@ -421,6 +546,9 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
             walk_tree(data)
         except Exception:
             continue
+
+    # Sort chronologically when merged from parallel time slices
+    superchats.sort(key=lambda x: _offset_to_seconds(x.get("time", "")))
 
     gross_inr = round(total_sc_inr + total_jewels_inr + total_mem_inr, 2)
     net_inr = round(gross_inr * 0.70, 2)
@@ -440,6 +568,7 @@ def parse_chat_json_lines(json_lines, video_id: str = "") -> dict:
             "superchat_count": len(superchats),
             "jewels_inr": round(total_jewels_inr, 2),
             "jewels_count": total_jewels_count,
+            "gifts_count": len(jewels),
             "memberships_inr": round(total_mem_inr, 2),
             "memberships_count": len(memberships),
             "donors_count": len(unique_donors),
@@ -646,21 +775,27 @@ def parse_all_chat_messages(json_lines, video_id: str = "") -> dict:
         # 6. YouTube Jewels Gifts
         elif "giftMessageViewModel" in item:
             r = item["giftMessageViewModel"]
-            text = extract_text_field(r.get("text"))
-            author = "Gift Supporter"
+            author, gname, qty, jewels_amt = _parse_gift_message_vm(r)
+            text = extract_text_field(r.get("text")) or gname
+            msg_id = r.get("id") or f"jewel:{author}:{gname}:{time_offset}:{len(messages)+1}"
+            if msg_id in seen_ids:
+                return
+            seen_ids.add(msg_id)
             jewel_count += 1
+            user_msg_counts[author] += 1
+            unique_chatters.add(author)
 
             messages.append({
                 "idx": len(messages) + 1,
-                "id": f"jewel_{len(messages)+1}",
+                "id": msg_id,
                 "time": time_offset,
                 "author": author,
                 "author_id": "",
                 "badges": ["JEWELS"],
                 "event_type": "JEWELS",
-                "badge_label": "💎 YouTube Jewels",
-                "amount": 0,
-                "currency": "",
+                "badge_label": f"💎 {jewels_amt} Jewels" if jewels_amt > 0 else f"💎 {gname}",
+                "amount": jewels_amt,
+                "currency": "JEWELS" if jewels_amt > 0 else "",
                 "details": text,
                 "message": text,
                 "stream_id": video_id
@@ -668,19 +803,14 @@ def parse_all_chat_messages(json_lines, video_id: str = "") -> dict:
 
     def walk_tree(obj, time_offset=""):
         if isinstance(obj, dict):
+            if "addLiveChatTickerItemAction" in obj or "addBannerToLiveChatCommand" in obj:
+                return
+
             if "replayChatItemAction" in obj:
                 act = obj["replayChatItemAction"]
-                video_offset_time = act.get("videoOffsetTimeMsec")
-                if video_offset_time and not time_offset:
-                    try:
-                        secs = int(video_offset_time) // 1000
-                        m, s = divmod(secs, 60)
-                        h, m = divmod(m, 60)
-                        time_offset = f"{h}:{m:02d}:{s:02d}" if h > 0 else f"{m}:{s:02d}"
-                    except Exception:
-                        pass
+                resolved_offset = _format_offset_ms(act.get("videoOffsetTimeMsec")) or time_offset
                 for a in act.get("actions", []):
-                    walk_tree(a, time_offset)
+                    walk_tree(a, resolved_offset)
                 return
 
             if "addChatItemAction" in obj:
@@ -991,6 +1121,172 @@ def _decode_cursor(token: Optional[str], expected_prefix: str) -> Optional[dict]
         return None
 
 
+INNERTUBE_CLIENT_CTX = {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}}
+INNERTUBE_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://www.youtube.com/',
+    'Origin': 'https://www.youtube.com',
+}
+
+
+def _find_live_chat_renderer(obj) -> Optional[dict]:
+    """Traverse /next JSON tree strictly to find liveChatRenderer."""
+    if isinstance(obj, dict):
+        if "liveChatRenderer" in obj and isinstance(obj["liveChatRenderer"], dict):
+            return obj["liveChatRenderer"]
+        for v in obj.values():
+            res = _find_live_chat_renderer(v)
+            if res:
+                return res
+    elif isinstance(obj, list):
+        for v in obj:
+            res = _find_live_chat_renderer(v)
+            if res:
+                return res
+    return None
+
+
+def _extract_lcr_token(lcr: Optional[dict]) -> Optional[str]:
+    if not isinstance(lcr, dict):
+        return None
+    for c in lcr.get("continuations", []):
+        for k in ("reloadContinuationData", "liveChatReplayContinuationData", "timedContinuationData"):
+            tok = c.get(k, {}).get("continuation") if isinstance(c, dict) else None
+            if tok:
+                return tok
+    return None
+
+
+def _extract_next_chat_token(chat_cont: dict) -> Optional[str]:
+    for c in chat_cont.get("continuations", []):
+        for k in ("liveChatReplayContinuationData", "reloadContinuationData", "timedContinuationData"):
+            if k in c and "continuation" in c[k]:
+                return c[k]["continuation"]
+    return None
+
+
+def _extract_seek_token(chat_cont: dict) -> Optional[str]:
+    for c in chat_cont.get("continuations", []):
+        if "playerSeekContinuationData" in c and "continuation" in c["playerSeekContinuationData"]:
+            return c["playerSeekContinuationData"]["continuation"]
+    return None
+
+
+def _fetch_player_meta(video_id: str, timeout: int = 10) -> dict:
+    """Fetch video duration, title, and playability status via InnerTube /player."""
+    try:
+        r = requests.post(
+            "https://www.youtube.com/youtubei/v1/player",
+            json={"context": INNERTUBE_CLIENT_CTX, "videoId": video_id},
+            headers=INNERTUBE_HEADERS,
+            timeout=timeout,
+        )
+        if r.status_code != 200:
+            return {}
+        data = r.json()
+        ps = data.get("playabilityStatus", {}) or {}
+        vd = data.get("videoDetails", {}) or {}
+        return {
+            "status": str(ps.get("status") or ""),
+            "reason": str(ps.get("reason") or ""),
+            "raw_ps": json.dumps(ps).lower(),
+            "title": str(vd.get("title") or "").strip(),
+            "length_seconds": int(vd.get("lengthSeconds") or 0),
+        }
+    except Exception:
+        return {}
+
+
+def _check_playability_restriction(video_id: str, title: str, html_lower: str = "", player_meta: Optional[dict] = None) -> Optional[dict]:
+    ps_text = ((player_meta or {}).get("raw_ps") or "") + " " + html_lower
+    if "members" in ps_text and (
+        "join this channel" in ps_text
+        or "members-only" in ps_text
+        or "sponsors_only_video" in ps_text
+        or "available to this channel's members" in ps_text
+    ):
+        return {
+            "success": False,
+            "error": "MEMBERS_ONLY",
+            "is_members_only": True,
+            "title": title,
+            "message": f"Members-Only stream ('{title}') - requires channel membership.",
+            "video_id": video_id,
+            "engine": "innertube",
+        }
+    if "private" in ps_text and ("this video is private" in ps_text or "private video" in ps_text):
+        return {
+            "success": False,
+            "error": "PRIVATE_STREAM",
+            "is_private": True,
+            "title": title,
+            "message": f"Private stream ('{title}') - restricted access.",
+            "video_id": video_id,
+            "engine": "innertube",
+        }
+    return None
+
+
+def _collect_replay_slice(api_key: str, seek_token: str, start_ms: int, end_ms: int, deadline_ts: float) -> tuple[int, list[dict]]:
+    """Fetch a single time-bounded replay slice using playerSeekContinuationData."""
+    sess = requests.Session()
+    sess.headers.update(INNERTUBE_HEADERS)
+    url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}"
+    seed_offset = max(0, start_ms - 8000)
+    cur = seek_token
+    first = True
+    seen = set()
+    chunks = 0
+    actions_out: list[dict] = []
+
+    while cur and cur not in seen and chunks < 450 and time.time() < deadline_ts:
+        seen.add(cur)
+        chunks += 1
+        payload = {"context": INNERTUBE_CLIENT_CTX, "continuation": cur}
+        if first:
+            payload["currentPlayerState"] = {"playerOffsetMs": str(seed_offset)}
+            first = False
+
+        resp = None
+        for attempt in range(2):
+            try:
+                resp = sess.post(url, json=payload, timeout=10)
+                if resp.status_code == 200:
+                    break
+            except Exception:
+                resp = None
+            if attempt == 0:
+                time.sleep(0.2)
+
+        if not resp or resp.status_code != 200:
+            break
+
+        data = resp.json()
+        chat_cont = (
+            data.get("continuationContents", {}).get("liveChatReplayContinuation")
+            or data.get("continuationContents", {}).get("liveChatContinuation")
+            or {}
+        )
+        acts = chat_cont.get("actions", [])
+        last_off = None
+        for a in acts:
+            actions_out.append(a)
+            off = a.get("replayChatItemAction", {}).get("videoOffsetTimeMsec")
+            if off is not None:
+                try:
+                    last_off = int(off)
+                except Exception:
+                    pass
+
+        if last_off is not None and last_off > end_ms + 8000:
+            break
+
+        cur = _extract_next_chat_token(chat_cont)
+
+    return chunks, actions_out
+
+
 def fetch_innertube_stream_data(
     video_id: str,
     timeout: int = 15,
@@ -1001,21 +1297,14 @@ def fetch_innertube_stream_data(
     """
     Directly streams YouTube Live Chat Replay JSON chunks from YouTube's InnerTube API.
     100% In-Memory, Zero Disk Storage, Pure Stateless Processing.
-    Supports Level B bounded scraping (`max_messages`) & exact cursor resumption (`continuation_token`).
+    Uses parallel time-sliced extraction when playerSeekContinuationData is available
+    so multi-hour streams finish in ~15-25s without missing late-stream Super Chats.
     """
     t0 = time.time()
     session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-    })
+    session.headers.update(INNERTUBE_HEADERS)
     session.cookies.set('SOCS', 'CAESEwgDEgk2ODQzMjY3OTgaAmVuIAEaBgiA_LyaBg', domain='.youtube.com')
     session.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
-
-    # Live chat replay requires a clean session without user account cookies,
-    # because user cookies inject personal watch history / resume timestamps,
-    # which causes YouTube to jump mid-stream and miss all earlier chats.
-    # Cookies are only needed for age-restricted video comments or restricted video metadata.
 
     limit = max(1, int(max_messages)) if (max_messages is not None and int(max_messages) > 0) else None
     cursor = _decode_cursor(continuation_token, "cta1:")
@@ -1025,33 +1314,25 @@ def fetch_innertube_stream_data(
         title = cursor.get("title") if cursor else None
         cont_token = cursor.get("t") if cursor else (continuation_token if continuation_token and not cursor else None)
         skip_in_chunk = max(0, int(cursor.get("s") or 0)) if cursor else 0
+        player_meta: dict = {}
 
-        # 1. Fetch continuation token and metadata via direct InnerTube /next API (Primary & Datacenter-Safe)
+        # 1. Fetch continuation token and metadata via direct InnerTube /next + /player APIs
         if not api_key or not cont_token:
             api_key = api_key or "AIzaSyAO_FJ2SlqAE4AqClSpNX8xydHGNeZaL0F"
+            player_meta = _fetch_player_meta(video_id, timeout=10)
+            if not title and player_meta.get("title"):
+                title = player_meta["title"]
 
-            # Step A: Direct InnerTube /youtubei/v1/next API (Bypasses all Google datacenter HTML 429 blocks)
             try:
-                next_url = "https://www.youtube.com/youtubei/v1/next"
-                next_headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Referer': 'https://www.youtube.com/',
-                    'Origin': 'https://www.youtube.com'
-                }
-                next_payload = {
-                    "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
-                    "videoId": video_id
-                }
-                next_resp = requests.post(next_url, json=next_payload, headers=next_headers, timeout=12)
+                next_resp = session.post(
+                    "https://www.youtube.com/youtubei/v1/next",
+                    json={"context": INNERTUBE_CLIENT_CTX, "videoId": video_id},
+                    timeout=12,
+                )
                 if next_resp.status_code == 200:
                     next_data = next_resp.json()
-                    next_text = json.dumps(next_data)
-                    mc = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', next_text)
-                    if not mc:
-                        mc = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', next_text)
-                    if mc:
-                        cont_token = mc.group(1)
+                    lcr = _find_live_chat_renderer(next_data)
+                    cont_token = _extract_lcr_token(lcr)
                     if not title:
                         try:
                             title = next_data.get('contents', {}).get('twoColumnWatchNextResults', {}).get('results', {}).get('results', {}).get('contents', [])[0].get('videoPrimaryInfoRenderer', {}).get('title', {}).get('runs', [])[0].get('text')
@@ -1060,9 +1341,12 @@ def fetch_innertube_stream_data(
             except Exception as ex:
                 print(f"[InnerTube Next API Error] {video_id}: {ex}")
 
-            # Step B: Fallback to HTML watch page only if Step A didn't yield cont_token
             html = ""
             if not cont_token:
+                restricted = _check_playability_restriction(video_id, title or f"Live Stream [{video_id}]", "", player_meta)
+                if restricted:
+                    return restricted
+
                 try:
                     resp = session.get(f"https://www.youtube.com/watch?v={video_id}", timeout=timeout)
                     if resp.status_code == 200:
@@ -1072,10 +1356,6 @@ def fetch_innertube_stream_data(
                             if m_title:
                                 title = m_title.group(1).replace(" - YouTube", "").strip()
                         m_cont = re.search(r'"liveChatRenderer":\s*\{.*?"continuation":\s*"([^"]+)"', html, re.DOTALL)
-                        if not m_cont:
-                            m_cont = re.search(r'"reloadContinuationData":\s*\{\s*"continuation":\s*"([^"]+)"', html)
-                        if not m_cont:
-                            m_cont = re.search(r'"continuation":"([a-zA-Z0-9_\-=]+)"', html)
                         if m_cont:
                             cont_token = m_cont.group(1)
                 except Exception as e:
@@ -1084,27 +1364,9 @@ def fetch_innertube_stream_data(
             title = title or f"Live Stream [{video_id}]"
 
             if not cont_token:
-                h_lower = html.lower() if html else ""
-                if ("members" in h_lower and ("join this channel" in h_lower or "members-only" in h_lower or "sponsors_only_video" in h_lower)):
-                    return {
-                        "success": False,
-                        "error": "MEMBERS_ONLY",
-                        "is_members_only": True,
-                        "title": title,
-                        "message": f"Members-Only stream ('{title}') - requires channel membership.",
-                        "video_id": video_id,
-                        "engine": "innertube"
-                    }
-                elif ("private" in h_lower and ("this video is private" in h_lower or "private video" in h_lower)):
-                    return {
-                        "success": False,
-                        "error": "PRIVATE_STREAM",
-                        "is_private": True,
-                        "title": title,
-                        "message": f"Private stream ('{title}') - restricted access.",
-                        "video_id": video_id,
-                        "engine": "innertube"
-                    }
+                restricted = _check_playability_restriction(video_id, title, html.lower() if html else "", player_meta)
+                if restricted:
+                    return restricted
                 return {
                     "success": False,
                     "error": "NO_CHAT_AVAILABLE",
@@ -1115,50 +1377,78 @@ def fetch_innertube_stream_data(
                 }
 
         title = title or f"Live Stream [{video_id}]"
-        api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}"
+        is_live_token = str(cont_token).startswith("0of")
+        api_url = (
+            f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
+            if is_live_token
+            else f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat_replay?key={api_key}"
+        )
 
         # Fast path A: Monetization Audit (/analyze-stream) - full stream events aggregation
         if not include_all_chat:
-            all_json_lines = []
-            seen = set()
-            chunks = 0
-            while cont_token and cont_token not in seen and chunks < 1000:
-                seen.add(cont_token)
-                chunks += 1
-                payload = {
-                    "context": {"client": {"clientName": "WEB", "clientVersion": "2.20261106.00.00"}},
-                    "continuation": cont_token
-                }
-                r = session.post(api_url, json=payload, timeout=12)
-                if r.status_code != 200:
-                    if "get_live_chat_replay" in api_url:
-                        api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
-                        r = session.post(api_url, json=payload, timeout=12)
-                    if r.status_code != 200:
-                        break
-                data = r.json()
-                chat_cont = (
-                    data.get("continuationContents", {}).get("liveChatReplayContinuation")
-                    or data.get("continuationContents", {}).get("liveChatContinuation")
+            duration_sec = int(player_meta.get("length_seconds") or 0)
+            if not duration_sec:
+                pm = _fetch_player_meta(video_id, timeout=8)
+                duration_sec = int(pm.get("length_seconds") or 0)
+
+            all_actions: list = []
+            seen = {cont_token}
+            chunks = 1
+            first_resp = session.post(api_url, json={"context": INNERTUBE_CLIENT_CTX, "continuation": cont_token}, timeout=12)
+            if first_resp.status_code != 200 and "get_live_chat_replay" in api_url:
+                api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
+                first_resp = session.post(api_url, json={"context": INNERTUBE_CLIENT_CTX, "continuation": cont_token}, timeout=12)
+
+            if first_resp.status_code == 200:
+                first_data = first_resp.json()
+                first_cont = (
+                    first_data.get("continuationContents", {}).get("liveChatReplayContinuation")
+                    or first_data.get("continuationContents", {}).get("liveChatContinuation")
                     or {}
                 )
-                for act in chat_cont.get("actions", []):
-                    all_json_lines.append(json.dumps(act))
+                all_actions.extend(first_cont.get("actions", []))
+                seek_tok = _extract_seek_token(first_cont)
+                next_tok = _extract_next_chat_token(first_cont)
 
-                next_token = None
-                for c in chat_cont.get("continuations", []):
-                    for k in ["liveChatReplayContinuationData", "reloadContinuationData", "timedContinuationData"]:
-                        if k in c and "continuation" in c[k]:
-                            next_token = c[k]["continuation"]
+                # Parallel Time-Sliced Extraction for replay streams > 90s when seek continuation exists
+                if seek_tok and duration_sec > 90 and "get_live_chat_replay" in api_url:
+                    slice_sec = 480  # 8-min windows with 32 I/O threads -> ~4-hour stream in ~22-30s
+                    slices = [(s * 1000, min(duration_sec, s + slice_sec) * 1000) for s in range(0, duration_sec, slice_sec)]
+                    deadline_ts = t0 + 58.0
+                    workers = min(32, max(6, len(slices)))
+                    with ThreadPoolExecutor(max_workers=workers) as ex:
+                        futs = [ex.submit(_collect_replay_slice, api_key, seek_tok, s_ms, e_ms, deadline_ts) for s_ms, e_ms in slices]
+                        for fut in as_completed(futs):
+                            try:
+                                c_n, slice_acts = fut.result()
+                                chunks += c_n
+                                all_actions.extend(slice_acts)
+                            except Exception:
+                                pass
+                else:
+                    # Sequential walk (short streams, streams without seek, or active live streams)
+                    cur = next_tok
+                    seq_max_chunks = 35 if "get_live_chat?" in api_url else 1800
+                    seq_deadline = t0 + (20.0 if "get_live_chat?" in api_url else 45.0)
+                    while cur and cur not in seen and chunks < seq_max_chunks and time.time() < seq_deadline:
+                        seen.add(cur)
+                        chunks += 1
+                        r = session.post(api_url, json={"context": INNERTUBE_CLIENT_CTX, "continuation": cur}, timeout=10)
+                        if r.status_code != 200:
                             break
-                    if next_token:
-                        break
-                cont_token = next_token
+                        data = r.json()
+                        chat_cont = (
+                            data.get("continuationContents", {}).get("liveChatReplayContinuation")
+                            or data.get("continuationContents", {}).get("liveChatContinuation")
+                            or {}
+                        )
+                        all_actions.extend(chat_cont.get("actions", []))
+                        cur = _extract_next_chat_token(chat_cont)
 
-            if not all_json_lines:
+            if not all_actions:
                 return None
 
-            parsed_data = parse_chat_json_lines(all_json_lines, video_id=video_id)
+            parsed_data = parse_chat_json_lines(all_actions, video_id=video_id)
             return {
                 "success": True,
                 "video_id": video_id,
@@ -1181,8 +1471,56 @@ def fetch_innertube_stream_data(
         chunks = 0
         has_more = False
         next_cursor = None
-        max_chunks = 2000 if limit else 1000
-        soft_time_limit = 42.0
+        max_chunks = (30 if is_live_token else 2000) if limit else 1000
+        soft_time_limit = 22.0
+
+        # If unlimited full chat export requested on initial call, check if parallel slicing applies
+        if limit is None and not continuation_token and not is_live_token:
+            duration_sec = int(player_meta.get("length_seconds") or 0)
+            if not duration_sec:
+                pm = _fetch_player_meta(video_id, timeout=8)
+                duration_sec = int(pm.get("length_seconds") or 0)
+            first_resp = session.post(api_url, json={"context": INNERTUBE_CLIENT_CTX, "continuation": cont_token}, timeout=12)
+            if first_resp.status_code == 200:
+                first_data = first_resp.json()
+                first_cont = (
+                    first_data.get("continuationContents", {}).get("liveChatReplayContinuation")
+                    or first_data.get("continuationContents", {}).get("liveChatContinuation")
+                    or {}
+                )
+                seek_tok = _extract_seek_token(first_cont)
+                if seek_tok and duration_sec > 90:
+                    slice_sec = 360
+                    slices = [(i, s * 1000, min(duration_sec, s + slice_sec) * 1000) for i, s in enumerate(range(0, duration_sec, slice_sec))]
+                    ordered_acts: dict[int, list] = {-1: first_cont.get("actions", [])}
+                    deadline_ts = t0 + 46.0
+                    workers = min(20, max(4, len(slices)))
+                    with ThreadPoolExecutor(max_workers=workers) as ex:
+                        fut_map = {ex.submit(_collect_replay_slice, api_key, seek_tok, s_ms, e_ms, deadline_ts): idx for idx, s_ms, e_ms in slices}
+                        for fut in as_completed(fut_map):
+                            s_idx = fut_map[fut]
+                            try:
+                                c_n, slice_acts = fut.result()
+                                chunks += c_n
+                                ordered_acts[s_idx] = slice_acts
+                            except Exception:
+                                ordered_acts[s_idx] = []
+                    merged_actions = []
+                    for key_idx in sorted(ordered_acts.keys()):
+                        merged_actions.extend(ordered_acts[key_idx])
+                    parsed_full = parse_all_chat_messages(merged_actions, video_id=video_id)
+                    parsed_full["elapsed_sec"] = round(time.time() - t0, 3)
+                    return {
+                        "success": True,
+                        "video_id": video_id,
+                        "title": title,
+                        "data": parsed_full,
+                        "has_more": False,
+                        "continuation_token": None,
+                        "engine": "innertube_direct",
+                        "chunks_streamed": chunks + 1,
+                        "elapsed_sec": round(time.time() - t0, 2)
+                    }
 
         while cont_token and cont_token not in seen_tokens and chunks < max_chunks:
             if chunks > 0 and (time.time() - t0) > soft_time_limit and len(collected_messages) > 0:
@@ -1200,20 +1538,15 @@ def fetch_innertube_stream_data(
             current_chunk_token = cont_token
 
             payload = {
-                "context": {
-                    "client": {
-                        "clientName": "WEB",
-                        "clientVersion": "2.20261106.00.00"
-                    }
-                },
+                "context": INNERTUBE_CLIENT_CTX,
                 "continuation": current_chunk_token
             }
 
-            r = session.post(api_url, json=payload, timeout=12)
+            r = session.post(api_url, json=payload, timeout=10)
             if r.status_code != 200:
                 if "get_live_chat_replay" in api_url:
                     api_url = f"https://www.youtube.com/youtubei/v1/live_chat/get_live_chat?key={api_key}"
-                    r = session.post(api_url, json=payload, timeout=12)
+                    r = session.post(api_url, json=payload, timeout=10)
                 if r.status_code != 200:
                     break
             data = r.json()
@@ -1224,15 +1557,7 @@ def fetch_innertube_stream_data(
                 or {}
             )
             actions = chat_cont.get("actions", [])
-
-            next_token = None
-            for c in chat_cont.get("continuations", []):
-                for k in ["liveChatReplayContinuationData", "reloadContinuationData", "timedContinuationData"]:
-                    if k in c and "continuation" in c[k]:
-                        next_token = c[k]["continuation"]
-                        break
-                if next_token:
-                    break
+            next_token = _extract_next_chat_token(chat_cont)
 
             chunk_parsed = parse_all_chat_messages(actions, video_id=video_id)
             chunk_msgs = chunk_parsed.get("messages", [])
@@ -1264,7 +1589,7 @@ def fetch_innertube_stream_data(
                 top_chatter_counts[author] += 1
                 unique_chatters.add(author)
                 ev = msg_copy.get("event_type")
-                if ev == "SUPERCHAT":
+                if ev in ("SUPERCHAT", "STICKER"):
                     sc_count += 1
                 elif ev in ("MEMBERSHIP", "GIFT"):
                     mem_count += 1
